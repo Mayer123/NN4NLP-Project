@@ -2,7 +2,7 @@ import csv
 import json
 
 passages = {}
-with open("./third_party/wikipedia/summaries.csv", 'r') as f:
+with open("../../narrativeqa/third_party/wikipedia/summaries.csv", 'r') as f:
     csv_reader = csv.reader(f, delimiter=',')
     count = 0
     for line in csv_reader:
@@ -17,7 +17,7 @@ with open("./third_party/wikipedia/summaries.csv", 'r') as f:
 train = []
 dev = []
 test = []
-with open("qaps.csv", 'r') as f:
+with open("../../narrativeqa/qaps.csv", 'r') as f:
     csv_reader = csv.reader(f, delimiter=',')
     count = 0
     for line in csv_reader:
@@ -45,12 +45,12 @@ print (len(train))
 print (len(dev))
 print (len(test))
 
-with open("searchqa_summary_train.json", "w") as fout:
+with open("narrativeqa_summary_train.json", "w") as fout:
     json.dump(train, fout, indent=4)
 
-with open("searchqa_summary_dev.json", "w") as fout:
+with open("narrativeqa_summary_dev.json", "w") as fout:
     json.dump(dev, fout, indent=4)
 
-with open("searchqa_summary_test.json", "w") as fout:
+with open("narrativeqa_summary_test.json", "w") as fout:
     json.dump(test, fout, indent=4)
 
