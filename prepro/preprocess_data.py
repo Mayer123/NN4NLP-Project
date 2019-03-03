@@ -116,9 +116,9 @@ def process_data(filename):
       
 
 def main():
-    process_data('narrative_summary_train.json')
-    process_data('narrative_summary_dev.json')
-    process_data('narrative_summary_test.json')
+    process_data('narrativeqa_summary_train.json')
+    process_data('narrativeqa_summary_dev.json')
+    process_data('narrativeqa_summary_test.json')
 
 if __name__ == '__main__':
     main()
