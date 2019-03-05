@@ -8,10 +8,9 @@ import torch.utils.data
 import time
 import rouge
 import argparse
+import logging
 
-seed = 6
-np.random.seed(seed)
-torch.manual_seed(seed)
+logger = logging.getLogger()
 
 class TextDataset(torch.utils.data.Dataset):
 
@@ -31,6 +30,7 @@ def add_arguments(parser):
     parser.add_argument("train_file", help="File that contains training data")
     parser.add_argument("dev_file", help="File that contains dev data")
     parser.add_argument("embedding_file", help="File that contains pre-trained embeddings")
+    parser.add_argument('--seed', type=int, default=6, help='Random seed for the experiment')
     parser.add_argument('--epochs', type=int, default=1, help='Train data iterations')
     parser.add_argument('--train_batch_size', type=int, default=32, help='Batch size for training')
     parser.add_argument('--dev_batch_size', type=int, default=32, help='Batch size for dev')
@@ -51,7 +51,7 @@ def convert_data(data, w2i, tag2i, ner2i):
             sample['context_tokens'], sample['question_tokens'], sample['chosen_answer'], answer1, answer2)
 
 
-def generating_embeddings(filename, word_dict):
+def generate_embeddings(filename, word_dict):
     embeddings = np.random.uniform(-0.25, 0.25, (len(word_dict), 100))
     count = 0
     with open(filename, "r") as f:
@@ -62,7 +62,7 @@ def generating_embeddings(filename, word_dict):
             if tokens[0] in word_dict:
                 embeddings[word_dict[tokens[0]]] = np.array(list(map(float, tokens[1:])))
                 count += 1
-    print (count, len(word_dict))
+    logger.info('Total vocab size %s pre-trained words %s' % (count, len(word_dict)))
     return embeddings
 
 def pad_sequence(sentences, pos, ner, em):
@@ -89,7 +89,8 @@ def compute_scores(start, end, context, a1, a2):
 
 
 def main(args):
-    
+    logger.info('-' * 100)
+    logger.info('Loading data')
     with open(args.train_file, 'r') as f:
         training_data = json.load(f)
     with open(args.dev_file, 'r') as f:
@@ -104,23 +105,28 @@ def main(args):
     ner2i = defaultdict(lambda: len(ner2i))
     pad_ner = ner2i["<PAD>"]
     unk_ner = ner2i["<unk>"]
+
+    logger.info('Converting to index')
     train = convert_data(training_data, w2i, tag2i, ner2i)
     w2i = defaultdict(lambda: UNK, w2i)
     tag2i = defaultdict(lambda: unk_tag, tag2i)
     ner2i = defaultdict(lambda: unk_ner, ner2i)
     dev = convert_data(dev_data, w2i, tag2i, ner2i)
 
+    logger.info('Generating embeddings')
     embeddings = generate_embeddings(args.embedding_file, w2i)
-    train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=args.train_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
-    dev_loader = torch.utils.data.DataLoader(dev, batch_size=args.dev_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
+    train_loader = torch.utils.data.DataLoader(list(train), shuffle=True, batch_size=args.train_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
+    dev_loader = torch.utils.data.DataLoader(list(dev), batch_size=args.dev_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
 
     use_cuda = torch.cuda.is_available()
     #model = MnemicReader()
-    optimizer = torch.optim.Adam(model.parameters())
+    #optimizer = torch.optim.Adam(model.parameters())
     if use_cuda:
-        torch.cuda.manual_seed(seed)
-        model.cuda()
+        torch.cuda.manual_seed(args.seed)
+        #model.cuda()
 
+    logger.info('Start training')
+    logger.info('-' * 100)
     global_step = 0
     best = 0.0
     for ITER in range(args.epochs):
@@ -154,7 +160,7 @@ def main(args):
             optimizer.zero_grad()
             batch_loss.backward()
             optimizer.step()
-        print("iter %r: train loss/sample=%.4f, time=%.2fs" % (ITER, train_loss / len(train_loader), time.time() - start))
+        logger.info("iter %r: train loss/sample=%.4f, time=%.2fs" % (ITER, train_loss / len(train_loader), time.time() - start))
 
         rouge_scores = 0.0
         for batch in dev_loader:
@@ -178,7 +184,7 @@ def main(args):
             batch_score = compute_scores(pred_start.tolist(), pred_end.tolist(), c, a1, a2)
             rouge_scores += batch_score
         avg_rouge = rouge_scores / len(dev_loader)
-        print("iter %r: dev average rouge score %.4f, time=%.2fs" % (ITER, avg_rouge, time.time() - start))
+        logger.info("iter %r: dev average rouge score %.4f, time=%.2fs" % (ITER, avg_rouge, time.time() - start))
         if avg_rouge > best:
             best = avg_rouge
             torch.save(model, 'best_model')
@@ -188,4 +194,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Train Reinforced Mnemonic Reader Model")
     add_arguments(parser)
     args = parser.parse_args()
+    logger.setLevel(logging.INFO)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
     main(args)
