@@ -11,7 +11,7 @@ nlp = en_core_web_sm.load()
 ps = PorterStemmer()
 
 MAX_SPAN_LEN = 6      # what number should we set here ? 
-stoplist = set(['the','a','.',',', '...'])
+stoplist = set(['the','a','.',',', '...', '..'])
 
 def get_ngrams(passage, n):
     ngrams_list = []
@@ -100,7 +100,7 @@ def process_data(filename):
         
         start_index = -1
         end_index = -1
-        for i in range(0, len(context_tokens) - ans_len):
+        for i in range(0, len(context_tokens) - ans_len + 1):
             if context_tokens[i: i+ans_len] == best_candidate:
                 start_index = i
                 end_index = i+ans_len-1
@@ -110,7 +110,7 @@ def process_data(filename):
         sample['start_index'] = start_index
         sample['end_index'] = end_index
 
-    new_name = filename.split('.') + '_index.json'
+    new_name = filename.split('.')[0] + '_index.json'
     with open(new_name, "w") as fout:
         json.dump(data, fout, indent=4)
       
