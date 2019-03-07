@@ -12,16 +12,18 @@ def output_mask(lengths, maxlen=None):
 	mask = (ran < lens).float()   
 	return mask.transpose(0,1) # (batch_size, maxlen)
 
-def getAligmentMatrix(v, u, mask=None):
-	E = torch.bmm(v,u.transpose(1,2))
-	
-	E = (E - torch.max(E, 2, keepdim=True)[0])
+def masked_softmax(E, mask, dim):
+	E = (E - torch.max(E, dim, keepdim=True)[0])
 	E = torch.exp(E) 
 	if mask is not None:
-		E = E * mask.transpose(1,2)
-	E = F.softmax(E, dim=2)
+		E = E * mask
+	E = E / torch.sum(E, dim=dim, keepdim=True)
 	return E
-		
+
+def getAligmentMatrix(v, u, mask=None):
+	E = torch.bmm(v,u.transpose(1,2))
+	E = masked_softmax(E, mask.transpose(1,2), 2)	
+	return E		
 
 class InteractiveAligner(nn.Module):
 	"""docstring for SimpleAligningBlock"""
@@ -82,6 +84,54 @@ class SelfAligner(nn.Module):
 		fused_x = self.fusion(x, attended_x)		
 		return fused_x, x_lens
 
+class Summarizer(nn.Module):
+	"""docstring for Summarizer"""
+	def __init__(self, enc_dim):
+		super(Summarizer, self).__init__()
+		self.W = nn.Linear(enc_dim, 1, bias=False)
+
+	def forward(self, v, v_lens):
+		alpha = self.W(v)
+		v_mask = output_mask(v_lens).unsqueeze(2)		
+		alpha = masked_softmax(alpha, v_mask, 1)
+		print "alpha.shape=",alpha.shape
+
+		s = torch.sum(alpha*v, dim=1, keepdim=True)
+		print 's.shape=',s.shape
+
+		return s
+
+class AnswerPointer(nn.Module):
+	"""docstring for AnswerPointer"""
+	def __init__(self, enc_dim):
+		super(AnswerPointer, self).__init__()
+		self.summarizer = Summarizer(enc_dim)
+		self.W1 = nn.Linear(4*enc_dim, enc_dim, bias=False)
+		self.w1 = nn.Linear(enc_dim, 1, bias=False)
+		self.W2 = nn.Linear(4*enc_dim, enc_dim, bias=False)
+		self.w2 = nn.Linear(enc_dim, 1, bias=False)
+		self.fusion = Fusion(enc_dim)
+
+	def computeP(self, s, r, r_lens):
+		print "r.shape", r.shape
+		catted = torch.cat((r, s, r*s, r-s), dim=2)
+		score1 = self.w1(F.tanh(self.W1(catted)))
+		r_mask = output_mask(r_lens).unsqueeze(2)		
+		p = masked_softmax(score1, r_mask, 1)
+		return p
+
+	def forward(self, v, v_lens, R, r_lens):
+		s = self.summarizer(v, v_lens)		
+		s = s.expand(s.shape[0], R.shape[1], s.shape[2])		
+		p1 = self.computeP(s, R, r_lens)
+
+		l = p1*R
+		st = self.fusion(s, l)
+		p2 = self.computeP(st, R, r_lens)
+
+		return p1, p2
+
+
 class AligningBlock(nn.Module):
 	"""docstring for AligningBlock"""
 	def __init__(self, enc_dim, hidden_size, n_hidden):
@@ -90,13 +140,18 @@ class AligningBlock(nn.Module):
 		self.self_aligner = SelfAligner(enc_dim)
 		self.evidence_collector = nn.LSTM(enc_dim, hidden_size, n_hidden, 
 							batch_first=True, bidirectional=True)
+		self.answer_pointer = AnswerPointer(enc_dim)
 
 	def forward(self, u, v, u_lens, v_lens):
 		H, h_lens = self.interactive_aligner(u, v, u_lens, v_lens)
 		Z, z_lens = self.self_aligner(H, h_lens)
 		packed_Z = rnn.pack_padded_sequence(Z, z_lens, batch_first=True)
-		R, _ = self.evidence_collector(packed_Z)
-		return packed_Z 
+		R, r_lens = self.evidence_collector(packed_Z)
+		R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)
+		p1, p2 = self.answer_pointer(v, v_lens, R, r_lens)
+		print "p1.shape", p1.shape
+		print 'p2.shape', p2.shape
+		return R, r_lens 
 
 if __name__ == '__main__':
 	ts1 = [torch.arange(0,2*(i+2)).float().view(-1,2) for i in range(4,-1, -1)]
@@ -114,5 +169,5 @@ if __name__ == '__main__':
 	print padded_ts1.shape, ts1_mask.shape
 	print padded_ts2.shape, ts2_mask.shape		
 	
-	alignB = AligningBlock(2, 10, 1)
+	alignB = AligningBlock(2, 1, 1)
 	alignB(ts1, ts2, ts1_lens, ts2_lens)		
