@@ -38,7 +38,9 @@ class InteractiveAligner(nn.Module):
 		# u and v should be padded sequences
 		# u.shape = B x m x enc_dim
 		# v.shape = B x n x end_dim
-		print "batch_size=%d, m=%d, n=%d, dim=%d" % (u.shape[0], u.shape[1], v.shape[1], v.shape[2])
+		
+		#print "batch_size=%d, m=%d, n=%d, dim=%d" % (u.shape[0], u.shape[1], v.shape[1], v.shape[2])
+		
 		v_proj = F.relu(self.W_v(v))
 		v_mask = output_mask(v_lens).unsqueeze(2)
 		v_proj = v_proj * v_mask
@@ -50,10 +52,10 @@ class InteractiveAligner(nn.Module):
 		# E.shape = B x n x m
 		E = getAligmentMatrix(v_proj, u_proj, mask=u_mask)
 		attended_v = torch.bmm(v.transpose(1,2), E).transpose(1,2)
-		print "batch_size=%d, m=%d, dim=%d" % (attended_v.shape[0], attended_v.shape[1], attended_v.shape[2])
+		#print "batch_size=%d, m=%d, dim=%d" % (attended_v.shape[0], attended_v.shape[1], attended_v.shape[2])
 
 		fused_u = self.fusion(u, attended_v)
-		print "batch_size=%d, n=%d, dim=%d" % (fused_u.shape[0], fused_u.shape[1], fused_u.shape[2])		
+		#print "batch_size=%d, n=%d, dim=%d" % (fused_u.shape[0], fused_u.shape[1], fused_u.shape[2])		
 		return fused_u, u_lens
 
 class Fusion(nn.Module):
@@ -94,10 +96,10 @@ class Summarizer(nn.Module):
 		alpha = self.W(v)
 		v_mask = output_mask(v_lens).unsqueeze(2)		
 		alpha = masked_softmax(alpha, v_mask, 1)
-		print "alpha.shape=",alpha.shape
+		#print "alpha.shape=",alpha.shape
 
 		s = torch.sum(alpha*v, dim=1, keepdim=True)
-		print 's.shape=',s.shape
+		#print 's.shape=',s.shape
 
 		return s
 
@@ -113,9 +115,9 @@ class AnswerPointer(nn.Module):
 		self.fusion = Fusion(enc_dim)
 
 	def computeP(self, s, r, r_lens):
-		print "r.shape", r.shape
+		#print "r.shape", r.shape
 		catted = torch.cat((r, s, r*s, r-s), dim=2)
-		score1 = self.w1(F.tanh(self.W1(catted)))
+		score1 = self.w1(torch.tanh(self.W1(catted)))
 		r_mask = output_mask(r_lens).unsqueeze(2)		
 		p = masked_softmax(score1, r_mask, 1)
 		return p
@@ -149,9 +151,9 @@ class AligningBlock(nn.Module):
 		R, r_lens = self.evidence_collector(packed_Z)
 		R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)
 		p1, p2 = self.answer_pointer(v, v_lens, R, r_lens)
-		print "p1.shape", p1.shape
-		print 'p2.shape', p2.shape
-		return R, r_lens 
+		# print "p1.shape", p1.shape
+		# print 'p2.shape', p2.shape
+		return p1, p2 
 
 if __name__ == '__main__':
 	ts1 = [torch.arange(0,2*(i+2)).float().view(-1,2) for i in range(4,-1, -1)]
