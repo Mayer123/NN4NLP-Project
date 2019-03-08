@@ -146,7 +146,9 @@ class AligningBlock(nn.Module):
 
     def forward(self, u, v, u_lens, v_lens):
         H, h_lens = self.interactive_aligner(u, v, u_lens, v_lens)
-        Z, z_lens = self.self_aligner(H, h_lens)
+        Z, z_lens = self.self_aligner(H, h_lens)        
+        z_lens, sorted_idxs = torch.sort(z_lens, descending=True)
+        Z = Z[sorted_idxs]        
         packed_Z = rnn.pack_padded_sequence(Z, z_lens, batch_first=True)
         R, r_lens = self.evidence_collector(packed_Z)
         R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)
@@ -156,13 +158,13 @@ class AligningBlock(nn.Module):
         return p1, p2 
 
 if __name__ == '__main__':
-    ts1 = [torch.arange(0,2*(i+2)).float().view(-1,2) for i in range(4,-1, -1)]
+    ts1 = [torch.arange(0,2*(i+2)).float().view(-1,2) for i in range(4)]
     ts1_lens = torch.tensor([len(ts) for ts in ts1])
     padded_ts1 = rnn.pad_sequence(ts1, batch_first=True)
     ts1_mask = output_mask(ts1_lens).unsqueeze(2)
     ts1 = (padded_ts1+1)
 
-    ts2 = [torch.arange(0,2*(i)).float().view(-1,2) for i in range(4,-1, -1)]
+    ts2 = [torch.arange(0,2*(i)).float().view(-1,2) for i in range(4)]
     ts2_lens = torch.tensor([len(ts) for ts in ts2])
     padded_ts2 = rnn.pad_sequence(ts2, batch_first=True)
     ts2_mask = output_mask(ts2_lens).unsqueeze(2)
