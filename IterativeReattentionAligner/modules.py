@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from torch.nn.utils import rnn 
 
 def output_mask(lengths, maxlen=None):
+    #print (lengths)
     if maxlen is None:
         maxlen = torch.max(lengths)
     lens = lengths.unsqueeze(0)
@@ -15,6 +16,7 @@ def output_mask(lengths, maxlen=None):
 def masked_softmax(E, mask, dim):
     E = (E - torch.max(E, dim, keepdim=True)[0])
     E = torch.exp(E) 
+    #print (E.device, mask.device)
     if mask is not None:
         E = E * mask
     E = E / torch.sum(E, dim=dim, keepdim=True)
@@ -148,10 +150,17 @@ class AligningBlock(nn.Module):
         H, h_lens = self.interactive_aligner(u, v, u_lens, v_lens)
         Z, z_lens = self.self_aligner(H, h_lens)        
         z_lens, sorted_idxs = torch.sort(z_lens, descending=True)
+        rev_sorted_idxs = sorted(range(len(sorted_idxs)), key=lambda i: sorted_idxs[i])
+
         Z = Z[sorted_idxs]        
         packed_Z = rnn.pack_padded_sequence(Z, z_lens, batch_first=True)
         R, r_lens = self.evidence_collector(packed_Z)
         R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)
+        
+        R = R[rev_sorted_idxs]
+        r_lens = r_lens[rev_sorted_idxs]
+
+        r_lens = r_lens.to(R.device)
         p1, p2 = self.answer_pointer(v, v_lens, R, r_lens)
         # print "p1.shape", p1.shape
         # print 'p2.shape', p2.shape
@@ -170,9 +179,9 @@ if __name__ == '__main__':
     ts2_mask = output_mask(ts2_lens).unsqueeze(2)
     ts2 = (padded_ts2+1)
 
-    print padded_ts1.shape, ts1_mask.shape
-    print padded_ts2.shape, ts2_mask.shape      
+    #print padded_ts1.shape, ts1_mask.shape
+    #print padded_ts2.shape, ts2_mask.shape      
     
     alignB = AligningBlock(2, 1, 1)
     p1,p2 = alignB(ts1, ts2, ts1_lens, ts2_lens)        
-    print p1.shape, p2.shape
+    #print p1.shape, p2.shape
