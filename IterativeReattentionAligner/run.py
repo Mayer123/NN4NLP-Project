@@ -34,8 +34,8 @@ def add_arguments(parser):
     parser.add_argument("embedding_file", help="File that contains pre-trained embeddings")
     parser.add_argument('--seed', type=int, default=6, help='Random seed for the experiment')
     parser.add_argument('--epochs', type=int, default=5, help='Train data iterations')
-    parser.add_argument('--train_batch_size', type=int, default=8, help='Batch size for training')
-    parser.add_argument('--dev_batch_size', type=int, default=8, help='Batch size for dev')
+    parser.add_argument('--train_batch_size', type=int, default=2, help='Batch size for training')
+    parser.add_argument('--dev_batch_size', type=int, default=2, help='Batch size for dev')
     parser.add_argument('--hidden_size', type=int, default=100, help='Hidden size for LSTM')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of layers for LSTM')
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
@@ -81,6 +81,8 @@ def build_dicts(data):
 
 def convert_data(data, w2i, tag2i, ner2i, c2i, max_len=-1):
     for i, sample in enumerate(data):
+        if i == 16:
+            break
         context_vector = [w2i[w] if w in w2i else 1 for w in sample['context_tokens']]
         context_pos_vec = [tag2i[t] if t in tag2i else 1 for t in sample['context_pos']]
         context_ner_vec = [ner2i[e] if e in ner2i else 1 for e in sample['context_ner']]
@@ -168,20 +170,26 @@ def main(args):
     rouge = Rouge()
     logger.info('Converting to index')
     w2i, tag2i, ner2i, c2i = build_dicts(training_data)
-    train = convert_data(training_data, w2i, tag2i, ner2i, c2i)
+    train = convert_data(training_data, w2i, tag2i, ner2i, c2i, 800)
     dev = convert_data(dev_data, w2i, tag2i, ner2i, c2i)
     print (len(w2i), len(tag2i), len(ner2i), len(c2i))
+    del training_data
+    del dev_data
     train = TextDataset(list(train))
     dev = TextDataset(list(dev))
     logger.info('Generating embeddings')
     embeddings = generate_embeddings(args.embedding_file, w2i)
     train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=args.train_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
     dev_loader = torch.utils.data.DataLoader(dev, batch_size=args.dev_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
+    del train
+    del dev
     #print (embeddings.shape)
     use_cuda = torch.cuda.is_available()
+    #use_cuda = False
     input_size = embeddings.shape[1] + args.char_emb_size * 2 + args.pos_emb_size + args.ner_emb_size + 1
-    model = MnemicReader(input_size, args.hidden_size, args.num_layers, args.char_emb_size, args.pos_emb_size, args.ner_emb_size, embeddings, len(c2i), len(tag2i), len(ner2i))
+    model = MnemicReader(input_size, args.hidden_size, args.num_layers, args.char_emb_size, args.pos_emb_size, args.ner_emb_size, embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2)
     optimizer = torch.optim.Adam(model.parameters())
+    del embeddings
     if use_cuda:
         torch.cuda.manual_seed(args.seed)
         model.cuda()
@@ -221,7 +229,7 @@ def main(args):
                 start = start.cuda()
                 end = end.cuda()
 
-            batch_loss = model(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end)
+            batch_loss = model(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, c)
             train_loss += batch_loss.cpu().item()
             optimizer.zero_grad()
             batch_loss.backward()

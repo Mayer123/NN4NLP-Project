@@ -52,7 +52,7 @@ class InteractiveAligner(nn.Module):
         u_proj = u_proj * u_mask
 
         # E.shape = B x n x m
-        E = getAligmentMatrix(v_proj, u_proj, mask=u_mask)
+        E = getAligmentMatrix(v_proj, u_proj, mask=u_mask)        # should we use v_mask instead? Also the softmax dimension may be wrong? 
         attended_v = torch.bmm(v.transpose(1,2), E).transpose(1,2)
         #print "batch_size=%d, m=%d, dim=%d" % (attended_v.shape[0], attended_v.shape[1], attended_v.shape[2])
 
