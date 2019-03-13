@@ -4,7 +4,7 @@ from torch import nn
 import torch.nn.functional as F
 from torch.nn.utils import rnn 
 
-def output_mask(lengths, maxlen=None, device=None):
+def output_mask(lengths, maxlen=None):
     if maxlen is None:
         maxlen = torch.max(lengths)
     lens = lengths.unsqueeze(0)
@@ -15,6 +15,7 @@ def output_mask(lengths, maxlen=None, device=None):
 def masked_softmax(E, mask, dim):
     E = (E - torch.max(E, dim, keepdim=True)[0])
     E = torch.exp(E) 
+    #print (E.device, mask.device)
     if mask is not None:
         E = E * mask
     E = E / torch.sum(E, dim=dim, keepdim=True)
@@ -53,6 +54,7 @@ class InteractiveAligner(nn.Module):
 
         # E.shape = B x n x m
         E = getAligmentMatrix(v_proj, u_proj, mask=u_mask, prev=prev_E)
+
         attended_v = torch.bmm(v.transpose(1,2), E).transpose(1,2)
         #print "batch_size=%d, m=%d, dim=%d" % (attended_v.shape[0], attended_v.shape[1], attended_v.shape[2])
         fused_u = self.fusion(u, attended_v)
@@ -166,6 +168,7 @@ class AligningBlock(nn.Module):
 
         R = R[rev_sorted_idxs]
         r_lens = r_lens[rev_sorted_idxs]
+        r_lens = r_lens.to(R.device)
 
         Z = Z[rev_sorted_idxs]
         z_lens = z_lens[rev_sorted_idxs]
@@ -191,6 +194,7 @@ class IterativeAligner(nn.Module):
         R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(R, v,
                                                      r_lens, v_lens, prev_E=E,
                                                      prev_B=B, prev_Zs=Zs)                 
+
         p1, p2 = self.answer_pointer(v, v_lens, R, r_lens)
         # print "p1.shape", p1.shape
         # print 'p2.shape', p2.shape
@@ -215,4 +219,5 @@ if __name__ == '__main__':
     
     alignB = IterativeAligner(2, 1, 1, 3)
     p1,p2 = alignB(ts1, ts2, ts1_lens, ts2_lens)        
+
     print(p1.shape, p2.shape)
