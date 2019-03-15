@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
-from modules import AligningBlock
+from old_modules import AligningBlock
 from loss import DCRLLoss
 
 class MnemicReader(nn.Module):
@@ -23,7 +23,7 @@ class MnemicReader(nn.Module):
 
         self.char_lstm = nn.LSTM(char_emb_dim, char_emb_dim, num_layers=1, bidirectional=True)
         self.aligningBlock = AligningBlock( 2 * hidden_size, hidden_size, hidden_size )
-        self.loss = nn.NLLLoss(reduction='mean')
+        self.loss = nn.CrossEntropyLoss()
         self.DCRL_loss = DCRLLoss(5)
 
         for i in range(num_layers):
@@ -58,8 +58,8 @@ class MnemicReader(nn.Module):
 
         que_char = que_char_lstm.view(q_char.size()[0], q_char.size()[1], -1)
 
-        con_input = torch.cat([con_vec, con_pos, con_ner, c_em.unsqueeze(2), con_char], 2)
-        que_input = torch.cat([que_vec, que_pos, que_ner, q_em.unsqueeze(2), que_char], 2)
+        con_input = torch.cat([con_vec, con_char, con_pos, con_ner, c_em.unsqueeze(2)], 2)
+        que_input = torch.cat([que_vec, que_char, que_pos, que_ner, q_em.unsqueeze(2)], 2)
         x1 = con_input.transpose(0, 1)
         x2 = que_input.transpose(0, 1)
 
@@ -88,12 +88,23 @@ class MnemicReader(nn.Module):
         s_prob, e_prob = self.aligningBlock(enc_con, enc_que, torch.sum(c_mask, dim=1),  torch.sum(q_mask, dim=1))
         #print (s_prob.shape, e_prob.shape)
         #print (start, end)
-        loss1 = self.loss(s_prob.squeeze(), start)
-        loss2 = self.loss(e_prob.squeeze(), end)
-        rl_loss = self.DCRL_loss(s_prob.squeeze(), e_prob.squeeze(), start, end, context)
+        #print (torch.gather(s_prob.squeeze(), 1, start.unsqueeze(1)))
+        #print (start)
+        #print (torch.gather(e_prob.squeeze(), 1, end.unsqueeze(1)))
+        #print (end)
+        #s_prob = torch.log(s_prob)
+        #e_prob = torch.log(e_prob)
+        s_prob = torch.squeeze(s_prob)
+        e_prob = torch.squeeze(e_prob)
+        loss1 = self.loss(s_prob, start)
+        loss2 = self.loss(e_prob, end)
+
+        s_prob = torch.nn.functional.softmax(s_prob, dim=1)
+        e_prob = torch.nn.functional.softmax(e_prob, dim=1)
+        rl_loss = self.DCRL_loss(s_prob, e_prob, start, end, context)
         #_, s_index = torch.max(torch.squeeze(s_prob), dim=1)
         #_, e_index = torch.max(torch.squeeze(e_prob), dim=1)
-
+        #print (loss1, loss2)
         #loss = (start - s_index)**2 + (end - e_index)**2
         return loss1 + loss2 + rl_loss
 
@@ -125,8 +136,8 @@ class MnemicReader(nn.Module):
 
         que_char = que_char_lstm.view(q_char.size()[0], q_char.size()[1], -1)
 
-        con_input = torch.cat([con_vec, con_pos, con_ner, c_em.unsqueeze(2), con_char], 2)
-        que_input = torch.cat([que_vec, que_pos, que_ner, q_em.unsqueeze(2), que_char], 2)
+        con_input = torch.cat([con_vec, con_char, con_pos, con_ner, c_em.unsqueeze(2)], 2)
+        que_input = torch.cat([que_vec, que_char, que_pos, que_ner, q_em.unsqueeze(2)], 2)
         x1 = con_input.transpose(0, 1)
         x2 = que_input.transpose(0, 1)
 
@@ -155,8 +166,12 @@ class MnemicReader(nn.Module):
         s_prob, e_prob = self.aligningBlock(enc_con, enc_que, torch.sum(c_mask, dim=1),  torch.sum(q_mask, dim=1))
         #loss1 = self.loss(s_prob.squeeze(), start)
         #loss2 = self.loss(e_prob.squeeze(), end)
-        _, s_index = torch.max(torch.squeeze(s_prob), dim=1)
-        _, e_index = torch.max(torch.squeeze(e_prob), dim=1)
+        s_prob = torch.squeeze(s_prob)
+        e_prob = torch.squeeze(e_prob)
+        s_prob = torch.nn.functional.softmax(s_prob, dim=1)
+        e_prob = torch.nn.functional.softmax(e_prob, dim=1)
+        _, s_index = torch.max(s_prob, dim=1)
+        _, e_index = torch.max(e_prob, dim=1)
 
         #loss = (start - s_index)**2 + (end - e_index)**2
         return s_index, e_index
