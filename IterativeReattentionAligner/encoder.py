@@ -85,7 +85,7 @@ class MnemicReader(nn.Module):
         #print (torch.sum(c_em, dim=1))
         #print (torch.sum(q_em, dim=1))
         #print (c_mask.device, q_mask.device)
-        s_prob, e_prob = self.aligningBlock(enc_con, enc_que, torch.sum(c_mask, dim=1),  torch.sum(q_mask, dim=1))
+        s_prob, e_prob = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
         #print (s_prob.shape, e_prob.shape)
         #print (start, end)
         #print (torch.gather(s_prob.squeeze(), 1, start.unsqueeze(1)))
@@ -98,15 +98,18 @@ class MnemicReader(nn.Module):
         e_prob = torch.squeeze(e_prob)
         loss1 = self.loss(s_prob, start)
         loss2 = self.loss(e_prob, end)
-
+        #print (s_prob)
         s_prob = torch.nn.functional.softmax(s_prob, dim=1)
         e_prob = torch.nn.functional.softmax(e_prob, dim=1)
-        rl_loss = self.DCRL_loss(s_prob, e_prob, start, end, context)
+        #print (s_prob)
+        s_prob = s_prob * c_mask.float()
+        e_prob = e_prob * c_mask.float()
+        #rl_loss = self.DCRL_loss(s_prob, e_prob, start, end, context)
         #_, s_index = torch.max(torch.squeeze(s_prob), dim=1)
         #_, e_index = torch.max(torch.squeeze(e_prob), dim=1)
         #print (loss1, loss2)
         #loss = (start - s_index)**2 + (end - e_index)**2
-        return loss1 + loss2 + rl_loss
+        return loss1 + loss2
 
     def evaluate(self, c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask):
         '''
@@ -163,28 +166,19 @@ class MnemicReader(nn.Module):
         #print (torch.sum(c_em, dim=1))
         #print (torch.sum(q_em, dim=1))
         #print (c_mask.device, q_mask.device)
-        s_prob, e_prob = self.aligningBlock(enc_con, enc_que, torch.sum(c_mask, dim=1),  torch.sum(q_mask, dim=1))
+        s_prob, e_prob = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
         #loss1 = self.loss(s_prob.squeeze(), start)
         #loss2 = self.loss(e_prob.squeeze(), end)
         s_prob = torch.squeeze(s_prob)
         e_prob = torch.squeeze(e_prob)
         s_prob = torch.nn.functional.softmax(s_prob, dim=1)
         e_prob = torch.nn.functional.softmax(e_prob, dim=1)
+        s_prob = s_prob * c_mask.float()
+        e_prob = e_prob * c_mask.float()
         _, s_index = torch.max(s_prob, dim=1)
         _, e_index = torch.max(e_prob, dim=1)
 
         #loss = (start - s_index)**2 + (end - e_index)**2
-        return s_index, e_index
-
-class answerPointerModel(nn.Module):
-    def __init__(self):
-        super(answerPointerModel, self).__init__()
-        
-    def forward(self, enc_con, enc_que):
-        enc_con = F.avg_pool2d(enc_con, [enc_con.size()[2]],stride=1)
-        softmax = F.log_softmax(enc_con)
-        _, s_index = torch.max(softmax, dim=1)
-        _, e_index = torch.max(softmax, dim=1)
         return s_index, e_index
 
 if __name__ == '__main__':

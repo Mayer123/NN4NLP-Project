@@ -26,6 +26,7 @@ def getAligmentMatrix(v, u, mask=None):
     E = torch.bmm(v,u.transpose(1,2))
     #E = masked_softmax(E, mask.transpose(1,2), 2) 
     E = torch.nn.functional.softmax(E, dim=1)  
+    E = E * mask.unsqueeze(2)
     return E        
 
 class InteractiveAligner(nn.Module):
@@ -37,7 +38,7 @@ class InteractiveAligner(nn.Module):
         self.W_v = nn.Linear(enc_dim, enc_dim, bias=False) # enc_dim x m
         self.fusion = Fusion(enc_dim)
 
-    def forward(self, u, v, u_lens, v_lens):
+    def forward(self, u, v, u_mask, v_mask):
         # u and v should be padded sequences
         # u.shape = B x m x enc_dim
         # v.shape = B x n x end_dim
@@ -45,21 +46,21 @@ class InteractiveAligner(nn.Module):
         #print "batch_size=%d, m=%d, n=%d, dim=%d" % (u.shape[0], u.shape[1], v.shape[1], v.shape[2])
         
         v_proj = F.relu(self.W_v(v))
-        v_mask = output_mask(v_lens).unsqueeze(2)
-        v_proj = v_proj * v_mask
+        #v_mask = output_mask(v_lens).unsqueeze(2)
+        v_proj = v_proj * v_mask.unsqueeze(2)
 
         u_proj = F.relu(self.W_u(u))
-        u_mask = output_mask(u_lens).unsqueeze(2)
-        u_proj = u_proj * u_mask
+        #u_mask = output_mask(u_lens).unsqueeze(2)
+        u_proj = u_proj * u_mask.unsqueeze(2)
 
         # E.shape = B x n x m
-        E = getAligmentMatrix(v_proj, u_proj, mask=u_mask)        # should we use v_mask instead? Also the softmax dimension may be wrong? 
+        E = getAligmentMatrix(v_proj, u_proj, mask=v_mask)        # should we use v_mask instead? Also the softmax dimension may be wrong? 
         attended_v = torch.bmm(v.transpose(1,2), E).transpose(1,2)
         #print "batch_size=%d, m=%d, dim=%d" % (attended_v.shape[0], attended_v.shape[1], attended_v.shape[2])
 
         fused_u = self.fusion(u, attended_v)
         #print "batch_size=%d, n=%d, dim=%d" % (fused_u.shape[0], fused_u.shape[1], fused_u.shape[2])       
-        return fused_u, u_lens
+        return fused_u
 
 class Fusion(nn.Module):
     """docstring for Fusion"""
@@ -82,13 +83,13 @@ class SelfAligner(nn.Module):
         super(SelfAligner, self).__init__()
         self.fusion = Fusion(enc_dim)
 
-    def forward(self, x, x_lens):
-        x_mask = output_mask(x_lens).unsqueeze(2)
-        x = x * x_mask
+    def forward(self, x, x_mask):
+        #x_mask = output_mask(x_lens).unsqueeze(2)
+        x = x * x_mask.unsqueeze(2)
         E = getAligmentMatrix(x, x, x_mask)
         attended_x = torch.bmm(x.transpose(1,2), E).transpose(1,2)
         fused_x = self.fusion(x, attended_x)        
-        return fused_x, x_lens
+        return fused_x
 
 class Summarizer(nn.Module):
     """docstring for Summarizer"""
@@ -96,11 +97,12 @@ class Summarizer(nn.Module):
         super(Summarizer, self).__init__()
         self.W = nn.Linear(enc_dim, 1, bias=False)
 
-    def forward(self, v, v_lens):
+    def forward(self, v, v_mask):
         alpha = self.W(v)
-        v_mask = output_mask(v_lens).unsqueeze(2)  
-        alpha = alpha * v_mask
-        alpha = torch.nn.functional.softmax(alpha, dim=1)     
+        #v_mask = output_mask(v_lens).unsqueeze(2)  
+        
+        alpha = torch.nn.functional.softmax(alpha, dim=1) 
+        alpha = alpha * v_mask.unsqueeze(2)    
         #alpha = masked_softmax(alpha, v_mask, 1)
         #print "alpha.shape=",alpha.shape
 
@@ -120,24 +122,23 @@ class AnswerPointer(nn.Module):
         self.w2 = nn.Linear(enc_dim, 1, bias=False)
         self.fusion = Fusion(enc_dim)
 
-    def computeP(self, s, r, r_lens):
+    def computeP(self, s, r, u_mask):
         #print "r.shape", r.shape
         catted = torch.cat((r, s, r*s, r-s), dim=2)
         score1 = self.w1(torch.tanh(self.W1(catted)))
-        r_mask = output_mask(r_lens).unsqueeze(2)       
+        #r_mask = output_mask(r_lens).unsqueeze(2)       
         #p = masked_softmax(score1, r_mask, 1)
-        p = score1 * r_mask
-        return p
+        #p = score1 * u_mask.unsqueeze(2)
+        return score1
 
-    def forward(self, v, v_lens, R, r_lens):
-        s = self.summarizer(v, v_lens)      
+    def forward(self, v, v_mask, R, u_mask):
+        s = self.summarizer(v, v_mask)      
         s = s.expand(s.shape[0], R.shape[1], s.shape[2])        
-        p1 = self.computeP(s, R, r_lens)
+        p1 = self.computeP(s, R, u_mask)
 
         l = p1*R
         st = self.fusion(s, l)
-        p2 = self.computeP(st, R, r_lens)
-
+        p2 = self.computeP(st, R, u_mask)
         return p1, p2
 
 
@@ -151,22 +152,22 @@ class AligningBlock(nn.Module):
                             batch_first=True, bidirectional=True)
         self.answer_pointer = AnswerPointer(enc_dim)
 
-    def forward(self, u, v, u_lens, v_lens):
-        H, h_lens = self.interactive_aligner(u, v, u_lens, v_lens)
-        Z, z_lens = self.self_aligner(H, h_lens)        
-        z_lens, sorted_idxs = torch.sort(z_lens, descending=True)
-        rev_sorted_idxs = sorted(range(len(sorted_idxs)), key=lambda i: sorted_idxs[i])
+    def forward(self, u, v, u_mask, v_mask):
+        H = self.interactive_aligner(u, v, u_mask, v_mask)
+        Z = self.self_aligner(H, u_mask)        
+        #z_lens, sorted_idxs = torch.sort(z_lens, descending=True)
+        #rev_sorted_idxs = sorted(range(len(sorted_idxs)), key=lambda i: sorted_idxs[i])
 
-        Z = Z[sorted_idxs]        
-        packed_Z = rnn.pack_padded_sequence(Z, z_lens, batch_first=True)
-        R, r_lens = self.evidence_collector(packed_Z)
-        R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)
+        #Z = Z[sorted_idxs]        
+        #packed_Z = rnn.pack_padded_sequence(Z, z_lens, batch_first=True)
+        R, _ = self.evidence_collector(Z)
+        #R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)
         
-        R = R[rev_sorted_idxs]
-        r_lens = r_lens[rev_sorted_idxs]
+        #R = R[rev_sorted_idxs]
+        #r_lens = r_lens[rev_sorted_idxs]
 
-        r_lens = r_lens.to(R.device)
-        p1, p2 = self.answer_pointer(v, v_lens, R, r_lens)
+        #r_lens = r_lens.to(R.device)
+        p1, p2 = self.answer_pointer(v, v_mask, R, u_mask)
         # print "p1.shape", p1.shape
         # print 'p2.shape', p2.shape
         return p1, p2 

@@ -34,13 +34,13 @@ def add_arguments(parser):
     parser.add_argument("embedding_file", help="File that contains pre-trained embeddings")
     parser.add_argument('--seed', type=int, default=6, help='Random seed for the experiment')
     parser.add_argument('--epochs', type=int, default=5, help='Train data iterations')
-    parser.add_argument('--train_batch_size', type=int, default=8, help='Batch size for training')
-    parser.add_argument('--dev_batch_size', type=int, default=8, help='Batch size for dev')
+    parser.add_argument('--train_batch_size', type=int, default=16, help='Batch size for training')
+    parser.add_argument('--dev_batch_size', type=int, default=16, help='Batch size for dev')
     parser.add_argument('--hidden_size', type=int, default=100, help='Hidden size for LSTM')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of layers for LSTM')
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
-    parser.add_argument('--pos_emb_size', type=int, default=50, help='Embedding size for pos tags')
-    parser.add_argument('--ner_emb_size', type=int, default=50, help='Embedding size for ner')
+    parser.add_argument('--pos_emb_size', type=int, default=20, help='Embedding size for pos tags')
+    parser.add_argument('--ner_emb_size', type=int, default=20, help='Embedding size for ner')
 
 def build_dicts(data):
     w2i = Counter()
@@ -195,8 +195,8 @@ def main(args):
     for ITER in range(args.epochs):
         train_loss = 0.0
         start_time = time.time()
-        #model.train()
-        for batch in tqdm.tqdm(train_loader):
+        model.train()
+        for batch in train_loader:
             global_step += 1
             #print (global_step)
             c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2 = batch
@@ -221,53 +221,54 @@ def main(args):
                 q_mask = q_mask.cuda()
                 start = start.cuda()
                 end = end.cuda()
-
             batch_loss = model(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, c)
             train_loss += batch_loss.cpu().item()
             optimizer.zero_grad()
             batch_loss.backward()
             #torch.nn.utils.clip_grad_norm_(model.parameters(),10)
             optimizer.step()
+            logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
         logger.info("iter %r global_step %s : train loss/batch=%.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), time.time() - start_time))
-        #model.eval()
-        dev_start_acc = 0.0
-        dev_end_acc = 0.0
-        rouge_scores = 0.0
-        for batch in dev_loader:
-            c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2 = batch
-            c_vec, c_pos, c_ner, c_em, c_char, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
-            q_vec, q_pos, q_ner, q_em, q_char, q_mask = pad_sequence(q_vec, q_pos, q_ner, q_char, q_em)
-            start = torch.as_tensor(start)
-            end = torch.as_tensor(end)
-            c_em = c_em.float()
-            q_em = q_em.float()
-            if use_cuda:
-                c_vec = c_vec.cuda()
-                c_pos = c_pos.cuda()
-                c_ner = c_ner.cuda()
-                c_char = c_char.cuda()
-                c_em = c_em.cuda()
-                c_mask = c_mask.cuda()
-                q_vec = q_vec.cuda()
-                q_pos = q_pos.cuda()
-                q_ner = q_ner.cuda()
-                q_char = q_char.cuda()
-                q_em = q_em.cuda()
-                q_mask = q_mask.cuda()
+        model.eval()
+        with torch.no_grad():
+            dev_start_acc = 0.0
+            dev_end_acc = 0.0
+            rouge_scores = 0.0
+            for batch in dev_loader:
+                c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2 = batch
+                c_vec, c_pos, c_ner, c_em, c_char, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
+                q_vec, q_pos, q_ner, q_em, q_char, q_mask = pad_sequence(q_vec, q_pos, q_ner, q_char, q_em)
+                start = torch.as_tensor(start)
+                end = torch.as_tensor(end)
+                c_em = c_em.float()
+                q_em = q_em.float()
+                if use_cuda:
+                    c_vec = c_vec.cuda()
+                    c_pos = c_pos.cuda()
+                    c_ner = c_ner.cuda()
+                    c_char = c_char.cuda()
+                    c_em = c_em.cuda()
+                    c_mask = c_mask.cuda()
+                    q_vec = q_vec.cuda()
+                    q_pos = q_pos.cuda()
+                    q_ner = q_ner.cuda()
+                    q_char = q_char.cuda()
+                    q_em = q_em.cuda()
+                    q_mask = q_mask.cuda()
 
-            pred_start, pred_end = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask)
+                pred_start, pred_end = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask)
 
-            batch_score = compute_scores(rouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
-            rouge_scores += batch_score
-            dev_start_acc += torch.sum(torch.eq(pred_start.cpu(), start)).item()
-            dev_end_acc += torch.sum(torch.eq(pred_end.cpu(), end)).item()
-        avg_rouge = rouge_scores / len(dev)
-        dev_start_acc /= len(dev)
-        dev_end_acc /= len(dev)
-        logger.info("iter %r: dev average rouge score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, dev_start_acc, dev_end_acc, time.time() - start_time))
-        if avg_rouge > best:
-            best = avg_rouge
-            torch.save(model, 'best_model')
+                batch_score = compute_scores(rouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
+                rouge_scores += batch_score
+                dev_start_acc += torch.sum(torch.eq(pred_start.cpu(), start)).item()
+                dev_end_acc += torch.sum(torch.eq(pred_end.cpu(), end)).item()
+            avg_rouge = rouge_scores / len(dev)
+            dev_start_acc /= len(dev)
+            dev_end_acc /= len(dev)
+            logger.info("iter %r: dev average rouge score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, dev_start_acc, dev_end_acc, time.time() - start_time))
+            if avg_rouge > best:
+                best = avg_rouge
+                torch.save(model, 'best_model')
 
 
 if __name__ == '__main__':
