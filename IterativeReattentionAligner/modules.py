@@ -13,7 +13,15 @@ def output_mask(lengths, maxlen=None):
     return mask.transpose(0,1) # (batch_size, maxlen)
 
 def masked_softmax(E, mask, dim):
-    E = (E - torch.max(E, dim, keepdim=True)[0])
+    # inv_mask = mask.clone()   
+    # print E[2] 
+    # E = E * mask
+    # print E[2]
+    # E[E == 0] = -float('inf')
+    # print E[2], mask[2]
+    # E = F.softmax(E, dim=dim)
+    # return E
+    E = (E - torch.max(E, dim, keepdim=True)[0])    
     E = torch.exp(E) 
     #print (E.device, mask.device)
     if mask is not None:
@@ -25,7 +33,9 @@ def getAligmentMatrix(v, u, mask=None, prev=None):
     E = torch.bmm(v,u.transpose(1,2))
     if prev is not None:
         E = E + prev
-    E = masked_softmax(E, mask.transpose(1,2), 2)   
+    E = masked_softmax(E, mask, 1)
+    # E[E == 0] = -float('inf')
+    # E = F.softmax(E, 1)    
     return E        
 
 class InteractiveAligner(nn.Module):
@@ -37,15 +47,15 @@ class InteractiveAligner(nn.Module):
         self.W_v = nn.Linear(enc_dim, enc_dim, bias=False) # enc_dim x m
         self.fusion = Fusion(enc_dim)
 
-    def forward(self, u, v, u_lens, v_lens, prev_E=None):
+    def forward(self, u, v, u_lens, v_lens, prev=None):
         # u and v should be padded sequences
         # u.shape = B x m x enc_dim
         # v.shape = B x n x end_dim
         
-        #print "batch_size=%d, m=%d, n=%d, dim=%d" % (u.shape[0], u.shape[1], v.shape[1], v.shape[2])
-        
+        # print "batch_size=%d, m=%d, n=%d, dim=%d" % (u.shape[0], u.shape[1], v.shape[1], v.shape[2])        
         v_proj = F.relu(self.W_v(v))
         v_mask = output_mask(v_lens).unsqueeze(2)
+        
         v_proj = v_proj * v_mask
 
         u_proj = F.relu(self.W_u(u))
@@ -53,11 +63,13 @@ class InteractiveAligner(nn.Module):
         u_proj = u_proj * u_mask
 
         # E.shape = B x n x m
-        E = getAligmentMatrix(v_proj, u_proj, mask=u_mask, prev=prev_E)
+        E = getAligmentMatrix(v_proj, u_proj, mask=v_mask, prev=prev)        
 
         attended_v = torch.bmm(v.transpose(1,2), E).transpose(1,2)
-        #print "batch_size=%d, m=%d, dim=%d" % (attended_v.shape[0], attended_v.shape[1], attended_v.shape[2])
-        fused_u = self.fusion(u, attended_v)
+        attended_v = attended_v * u_mask
+        # print E[4], v[4], attended_v[4]
+        # print "batch_size=%d, m=%d, dim=%d" % (attended_v.shape[0], attended_v.shape[1], attended_v.shape[2])
+        fused_u = self.fusion(u, attended_v)        
         # print u_lens[1], u[1], attended_v[1], fused_u[1]
         #print "batch_size=%d, n=%d, dim=%d" % (fused_u.shape[0], fused_u.shape[1], fused_u.shape[2])       
         return fused_u, u_lens, E
@@ -83,13 +95,17 @@ class SelfAligner(nn.Module):
         super(SelfAligner, self).__init__()
         self.fusion = Fusion(enc_dim)
 
-    def forward(self, x, x_lens, prev_B=None):
-        x_mask = output_mask(x_lens)
-        I = torch.eye(x_mask.shape[1]).unsqueeze(0)        
-        x_mask = torch.abs(I-1) * x_mask.unsqueeze(2)        
+    def forward(self, x, x_lens, prev=None):
+        x_mask = output_mask(x_lens).unsqueeze(2)
+        x = x * x_mask
         
-        E = getAligmentMatrix(x,x, x_mask, prev=prev_B)                      
-        attended_x = torch.bmm(x.transpose(1,2), E).transpose(1,2)
+        I = torch.eye(x_mask.shape[1], device=x_mask.device).unsqueeze(0)        
+        x_mask_ = torch.abs(I-1) * x_mask
+
+        E = getAligmentMatrix(x, x, x_mask_, prev=prev)                      
+        attended_x = torch.bmm(x.transpose(1,2), E).transpose(1,2)        
+        attended_x = attended_x * x_mask        
+
         fused_x = self.fusion(x, attended_x)        
         return fused_x, x_lens, E
 
@@ -125,8 +141,9 @@ class AnswerPointer(nn.Module):
         #print "r.shape", r.shape
         catted = torch.cat((r, s, r*s, r-s), dim=2)
         score1 = self.w1(torch.tanh(self.W1(catted)))
-        r_mask = output_mask(r_lens).unsqueeze(2)       
-        p = masked_softmax(score1, r_mask, 1)
+        r_mask = output_mask(r_lens).unsqueeze(2)               
+        # p = masked_softmax(score1, r_mask, 1)
+        p = score1 * r_mask
         return p
 
     def forward(self, v, v_lens, R, r_lens):
@@ -150,9 +167,9 @@ class AligningBlock(nn.Module):
         self.evidence_collector = nn.LSTM(enc_dim, hidden_size, n_hidden, 
                             batch_first=True, bidirectional=True)        
 
-    def forward(self, u, v, u_lens, v_lens, prev_E=None, prev_B=None, prev_Zs=None):
-        H, h_lens, E = self.interactive_aligner(u, v, u_lens, v_lens, prev_E=prev_E)
-        Z, z_lens, B = self.self_aligner(H, h_lens, prev_B=prev_B)
+    def forward(self, u, v, u_lens, v_lens, Et=None, Bt=None, prev_Zs=None):
+        H, h_lens, E = self.interactive_aligner(u, v, u_lens, v_lens, prev=Et)
+        Z, z_lens, B = self.self_aligner(H, h_lens, prev=Bt)
         
         if prev_Zs is not None:
             for z in prev_Zs:            
@@ -163,7 +180,7 @@ class AligningBlock(nn.Module):
 
         Z = Z[sorted_idxs]
         packed_Z = rnn.pack_padded_sequence(Z, z_lens, batch_first=True)
-        R, r_lens = self.evidence_collector(packed_Z)
+        R, _ = self.evidence_collector(packed_Z)
         R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)    
 
         R = R[rev_sorted_idxs]
@@ -172,6 +189,7 @@ class AligningBlock(nn.Module):
 
         Z = Z[rev_sorted_idxs]
         z_lens = z_lens[rev_sorted_idxs]
+
         return R, Z, E, B, r_lens, z_lens, h_lens        
 
 class IterativeAligner(nn.Module):
@@ -181,20 +199,30 @@ class IterativeAligner(nn.Module):
         self.aligning_block = AligningBlock(enc_dim, hidden_size, n_hidden)
         self.y = nn.Parameter(torch.rand(1))
         self.answer_pointer = AnswerPointer(enc_dim)
+        assert (niters >= 1)
         self.niters = niters
 
-    def forward(self, u, v, u_lens, v_lens):
-        R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(u, v, u_lens, v_lens)
-        Zs = [Z]
-        for i in range(self.niters-2):
-            R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(R, v,
-                                                     r_lens, v_lens, prev_E=E,
-                                                     prev_B=B)
-            Zs.append(Z)
-        R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(R, v,
-                                                     r_lens, v_lens, prev_E=E,
-                                                     prev_B=B, prev_Zs=Zs)                 
+    def forward(self, u, v, u_mask, v_mask):
+        u_lens = torch.sum(u_mask, 1)
+        v_lens = torch.sum(v_mask, 1)
 
+        R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(u, v, u_lens, v_lens)
+        if self.niters > 1:
+            Zs = [Z]
+            Et = self.y * torch.bmm(E, B)
+            Bt = self.y * torch.bmm(B, B)
+
+            for i in range(self.niters-2):
+                R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(R, v,
+                                                         r_lens, v_lens, Et=Et,
+                                                         Bt=Bt)
+                Zs.append(Z)
+                Et = self.y * torch.bmm(E, B)
+                Bt = self.y * torch.bmm(B, B)
+            R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(R, v,
+                                                         r_lens, v_lens, Et=Et,
+                                                         Bt=Bt, prev_Zs=Zs)
+        
         p1, p2 = self.answer_pointer(v, v_lens, R, r_lens)
         # print "p1.shape", p1.shape
         # print 'p2.shape', p2.shape
@@ -202,22 +230,22 @@ class IterativeAligner(nn.Module):
         
 
 if __name__ == '__main__':
-    ts1 = [torch.arange(0,2*(i+2)).float().view(-1,2) for i in range(4)]
+    ts1 = [torch.arange(0,2*(i+2)).float().view(-1,2)+1 for i in range(4)]
     ts1_lens = torch.tensor([len(ts) for ts in ts1])
     padded_ts1 = rnn.pad_sequence(ts1, batch_first=True)
-    ts1_mask = output_mask(ts1_lens).unsqueeze(2)
-    ts1 = (padded_ts1+1)
+    ts1_mask = output_mask(ts1_lens)
+    ts1 = (padded_ts1)
 
-    ts2 = [torch.arange(0,2*(i)).float().view(-1,2) for i in range(4)]
+    ts2 = [torch.arange(0,2*(i+1)).float().view(-1,2)+1 for i in range(4)]
     ts2_lens = torch.tensor([len(ts) for ts in ts2])
     padded_ts2 = rnn.pad_sequence(ts2, batch_first=True)
-    ts2_mask = output_mask(ts2_lens).unsqueeze(2)
-    ts2 = (padded_ts2+1)
+    ts2_mask = output_mask(ts2_lens)
+    ts2 = (padded_ts2)
 
     print(padded_ts1.shape, ts1_mask.shape)
     print(padded_ts2.shape, ts2_mask.shape)
     
-    alignB = IterativeAligner(2, 1, 1, 3)
-    p1,p2 = alignB(ts1, ts2, ts1_lens, ts2_lens)        
+    alignB = IterativeAligner(2, 1, 1, 1)
+    p1,p2 = alignB(ts1, ts2, ts1_mask, ts2_mask)        
 
     print(p1.shape, p2.shape)

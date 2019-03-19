@@ -59,7 +59,7 @@ class InteractiveAligner(nn.Module):
 
         fused_u = self.fusion(u, attended_v)
         #print "batch_size=%d, n=%d, dim=%d" % (fused_u.shape[0], fused_u.shape[1], fused_u.shape[2])       
-        return fused_u, u_lens
+        return fused_u, u_lens, E
 
 class Fusion(nn.Module):
     """docstring for Fusion"""
@@ -88,7 +88,7 @@ class SelfAligner(nn.Module):
         E = getAligmentMatrix(x, x, x_mask)
         attended_x = torch.bmm(x.transpose(1,2), E).transpose(1,2)
         fused_x = self.fusion(x, attended_x)        
-        return fused_x, x_lens
+        return fused_x, x_lens, E
 
 class Summarizer(nn.Module):
     """docstring for Summarizer"""
@@ -152,8 +152,8 @@ class AligningBlock(nn.Module):
         self.answer_pointer = AnswerPointer(enc_dim)
 
     def forward(self, u, v, u_lens, v_lens):
-        H, h_lens = self.interactive_aligner(u, v, u_lens, v_lens)
-        Z, z_lens = self.self_aligner(H, h_lens)        
+        H, h_lens, E = self.interactive_aligner(u, v, u_lens, v_lens)
+        Z, z_lens, B = self.self_aligner(H, h_lens)        
         z_lens, sorted_idxs = torch.sort(z_lens, descending=True)
         rev_sorted_idxs = sorted(range(len(sorted_idxs)), key=lambda i: sorted_idxs[i])
 
@@ -166,6 +166,39 @@ class AligningBlock(nn.Module):
         r_lens = r_lens[rev_sorted_idxs]
 
         r_lens = r_lens.to(R.device)
+        return R, Z, E, B, r_lens, z_lens, h_lens        
+
+class IterativeAligner(nn.Module):
+    """docstring for IterativeAligner"""
+    def __init__(self, enc_dim, hidden_size, n_hidden, niters):
+        super(IterativeAligner, self).__init__()
+        self.aligning_block = AligningBlock(enc_dim, hidden_size, n_hidden)
+        self.y = nn.Parameter(torch.rand(1))
+        self.answer_pointer = AnswerPointer(enc_dim)
+        assert (niters >= 1)
+        self.niters = niters
+
+    def forward(self, u, v, u_mask, v_mask):
+        u_lens = torch.sum(u_mask, 1)
+        v_lens = torch.sum(v_mask, 1)
+
+        R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(u, v, u_lens, v_lens)
+        if self.niters > 1:
+            Zs = [Z]
+            Et = self.y * torch.bmm(E, B)
+            Bt = self.y * torch.bmm(B, B)
+
+            for i in range(self.niters-2):
+                R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(R, v,
+                                                         r_lens, v_lens, Et=Et,
+                                                         Bt=Bt)
+                Zs.append(Z)
+                Et = self.y * torch.bmm(E, B)
+                Bt = self.y * torch.bmm(B, B)
+            R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(R, v,
+                                                         r_lens, v_lens, Et=Et,
+                                                         Bt=Bt, prev_Zs=Zs)
+        
         p1, p2 = self.answer_pointer(v, v_lens, R, r_lens)
         # print "p1.shape", p1.shape
         # print 'p2.shape', p2.shape
