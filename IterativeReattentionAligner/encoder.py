@@ -84,7 +84,8 @@ class MnemicReader(nn.Module):
 
         #print (torch.sum(c_em, dim=1))
         #print (torch.sum(q_em, dim=1))
-        #print (c_mask.device, q_mask.device)        
+
+        #print (c_mask.device, q_mask.device)
         s_prob, e_prob = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
         #print (s_prob.shape, e_prob.shape)
         #print (start, end)
