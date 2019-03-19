@@ -143,7 +143,7 @@ class AnswerPointer(nn.Module):
         score1 = self.w1(torch.tanh(self.W1(catted)))
         r_mask = output_mask(r_lens).unsqueeze(2)               
         # p = masked_softmax(score1, r_mask, 1)
-        p = score1 * r_mask
+        p = torch.exp(score1) * r_mask
         return p
 
     def forward(self, v, v_lens, R, r_lens):
@@ -153,7 +153,7 @@ class AnswerPointer(nn.Module):
 
         l = p1*R
         st = self.fusion(s, l)
-        p2 = self.computeP(st, R, r_lens)
+        p2 = self.computeP(st, R, r_lens)        
 
         return p1, p2
 
@@ -175,22 +175,22 @@ class AligningBlock(nn.Module):
             for z in prev_Zs:            
                 Z += z
                             
-        z_lens, sorted_idxs = torch.sort(z_lens, descending=True)
-        rev_sorted_idxs = sorted(range(len(sorted_idxs)), key=lambda i: sorted_idxs[i])
+        # z_lens, sorted_idxs = torch.sort(z_lens, descending=True)
+        # rev_sorted_idxs = sorted(range(len(sorted_idxs)), key=lambda i: sorted_idxs[i])
 
-        Z = Z[sorted_idxs]
-        packed_Z = rnn.pack_padded_sequence(Z, z_lens, batch_first=True)
-        R, _ = self.evidence_collector(packed_Z)
-        R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)    
+        # Z = Z[sorted_idxs]
+        # packed_Z = rnn.pack_padded_sequence(Z, z_lens, batch_first=True)
+        R, _ = self.evidence_collector(Z)
+        # R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)    
 
-        R = R[rev_sorted_idxs]
-        r_lens = r_lens[rev_sorted_idxs]
-        r_lens = r_lens.to(R.device)
+        # R = R[rev_sorted_idxs]
+        # r_lens = r_lens[rev_sorted_idxs]
+        # r_lens = r_lens.to(R.device)
 
-        Z = Z[rev_sorted_idxs]
-        z_lens = z_lens[rev_sorted_idxs]
+        # Z = Z[rev_sorted_idxs]
+        # z_lens = z_lens[rev_sorted_idxs]
 
-        return R, Z, E, B, r_lens, z_lens, h_lens        
+        return R, Z, E, B, z_lens, z_lens, h_lens        
 
 class IterativeAligner(nn.Module):
     """docstring for IterativeAligner"""
@@ -223,7 +223,7 @@ class IterativeAligner(nn.Module):
                                                          r_lens, v_lens, Et=Et,
                                                          Bt=Bt, prev_Zs=Zs)
         
-        p1, p2 = self.answer_pointer(v, v_lens, R, r_lens)
+        p1, p2 = self.answer_pointer(v, v_lens, R, r_lens)        
         # print "p1.shape", p1.shape
         # print 'p2.shape', p2.shape
         return p1, p2
@@ -248,4 +248,5 @@ if __name__ == '__main__':
     alignB = IterativeAligner(2, 1, 1, 1)
     p1,p2 = alignB(ts1, ts2, ts1_mask, ts2_mask)        
 
-    print(p1.shape, p2.shape)
+    print(p1[1], ts1[1], p1.shape) 
+    print(p2[1], ts1[1], p2.shape)
