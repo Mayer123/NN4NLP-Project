@@ -10,6 +10,7 @@ from rouge import Rouge
 import argparse
 import logging
 from encoder import MnemicReader
+import cProfile, pstats, io
 
 stoplist = set(['.',',', '...', '..'])
 logger = logging.getLogger()
@@ -32,17 +33,18 @@ def add_arguments(parser):
     parser.add_argument("train_file", help="File that contains training data")
     parser.add_argument("dev_file", help="File that contains dev data")
     parser.add_argument("embedding_file", help="File that contains pre-trained embeddings")
+    parser.add_argument('--dicts_dir', type=str, default=None, help='Directory containing the word dictionaries')
     parser.add_argument('--seed', type=int, default=6, help='Random seed for the experiment')
     parser.add_argument('--epochs', type=int, default=5, help='Train data iterations')
-    parser.add_argument('--train_batch_size', type=int, default=8, help='Batch size for training')
-    parser.add_argument('--dev_batch_size', type=int, default=8, help='Batch size for dev')
+    parser.add_argument('--train_batch_size', type=int, default=16, help='Batch size for training')
+    parser.add_argument('--dev_batch_size', type=int, default=16, help='Batch size for dev')
     parser.add_argument('--hidden_size', type=int, default=100, help='Hidden size for LSTM')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of layers for LSTM')
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
-    parser.add_argument('--pos_emb_size', type=int, default=50, help='Embedding size for pos tags')
-    parser.add_argument('--ner_emb_size', type=int, default=50, help='Embedding size for ner')
+    parser.add_argument('--pos_emb_size', type=int, default=20, help='Embedding size for pos tags')
+    parser.add_argument('--ner_emb_size', type=int, default=20, help='Embedding size for ner')
 
-def build_dicts(data):
+def build_dicts(data):    
     w2i = Counter()
     tag2i = Counter()
     ner2i = Counter()
@@ -77,6 +79,9 @@ def build_dicts(data):
     for i, (k, v) in enumerate(c2i.most_common()):
         char_dict[k] = i + 2
     # 0 for padding and 1 for unk
+    for d in ['word_dict', 'tag_dict', 'ner_dict', 'char_dict']:
+        with open('../prepro/dicts/%s.json'%d, 'w') as f:
+            json.dump(locals()[d], f)
     return word_dict, tag_dict, ner_dict, char_dict
 
 def convert_data(data, w2i, tag2i, ner2i, c2i, max_len=-1):
@@ -108,7 +113,7 @@ def convert_data(data, w2i, tag2i, ner2i, c2i, max_len=-1):
 def generate_embeddings(filename, word_dict):
     embeddings = np.random.uniform(-0.25, 0.25, (len(word_dict)+2, 100))
     count = 0
-    with open(filename, "r") as f:
+    with open(filename, "r", encoding="utf-8") as f:
         for i, line in enumerate(f):
             if i == 0:
                 continue
@@ -117,6 +122,7 @@ def generate_embeddings(filename, word_dict):
                 embeddings[word_dict[tokens[0]]] = np.array(list(map(float, tokens[1:])))
                 count += 1
     logger.info('Total vocab size %s pre-trained words %s' % (len(word_dict), count))
+    np.save("../prepro/embeddings.npy", embeddings)
     return embeddings
 
 def pad_sequence(sentences, pos, ner, char, em):
@@ -167,7 +173,14 @@ def main(args):
         dev_data = json.load(f)
     rouge = Rouge()
     logger.info('Converting to index')
-    w2i, tag2i, ner2i, c2i = build_dicts(training_data)
+    if args.dicts_dir is not None:
+        dicts = []
+        for d in ['word_dict', 'tag_dict', 'ner_dict', 'char_dict']:
+            with open('%s/%s.json'%(args.dicts_dir, d), 'r') as f:
+                dicts.append(json.load(f))
+        [w2i, tag2i, ner2i, c2i] = dicts
+    else:
+        w2i, tag2i, ner2i, c2i = build_dicts(training_data)
     train = convert_data(training_data, w2i, tag2i, ner2i, c2i, 800)
     dev = convert_data(dev_data, w2i, tag2i, ner2i, c2i)
     print (len(w2i), len(tag2i), len(ner2i), len(c2i))
@@ -195,8 +208,11 @@ def main(args):
     for ITER in range(args.epochs):
         train_loss = 0.0
         start_time = time.time()
-        #model.train()
-        for batch in tqdm.tqdm(train_loader):
+        model.train()
+        for batch in train_loader:
+            pr = cProfile.Profile()
+            # pr.enable()
+
             global_step += 1
             #print (global_step)
             c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2 = batch
@@ -221,53 +237,61 @@ def main(args):
                 q_mask = q_mask.cuda()
                 start = start.cuda()
                 end = end.cuda()
-
             batch_loss = model(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, c)
             train_loss += batch_loss.cpu().item()
             optimizer.zero_grad()
             batch_loss.backward()
             #torch.nn.utils.clip_grad_norm_(model.parameters(),10)
             optimizer.step()
+            logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
+            # pr.disable()
+            # s = io.StringIO()
+            # sortby = 'tottime'
+            # ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+            # ps.print_stats()
+            # print(s.getvalue())
+            # return
         logger.info("iter %r global_step %s : train loss/batch=%.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), time.time() - start_time))
-        #model.eval()
-        dev_start_acc = 0.0
-        dev_end_acc = 0.0
-        rouge_scores = 0.0
-        for batch in dev_loader:
-            c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2 = batch
-            c_vec, c_pos, c_ner, c_em, c_char, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
-            q_vec, q_pos, q_ner, q_em, q_char, q_mask = pad_sequence(q_vec, q_pos, q_ner, q_char, q_em)
-            start = torch.as_tensor(start)
-            end = torch.as_tensor(end)
-            c_em = c_em.float()
-            q_em = q_em.float()
-            if use_cuda:
-                c_vec = c_vec.cuda()
-                c_pos = c_pos.cuda()
-                c_ner = c_ner.cuda()
-                c_char = c_char.cuda()
-                c_em = c_em.cuda()
-                c_mask = c_mask.cuda()
-                q_vec = q_vec.cuda()
-                q_pos = q_pos.cuda()
-                q_ner = q_ner.cuda()
-                q_char = q_char.cuda()
-                q_em = q_em.cuda()
-                q_mask = q_mask.cuda()
+        model.eval()
+        with torch.no_grad():
+            dev_start_acc = 0.0
+            dev_end_acc = 0.0
+            rouge_scores = 0.0
+            for batch in dev_loader:
+                c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2 = batch
+                c_vec, c_pos, c_ner, c_em, c_char, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
+                q_vec, q_pos, q_ner, q_em, q_char, q_mask = pad_sequence(q_vec, q_pos, q_ner, q_char, q_em)
+                start = torch.as_tensor(start)
+                end = torch.as_tensor(end)
+                c_em = c_em.float()
+                q_em = q_em.float()
+                if use_cuda:
+                    c_vec = c_vec.cuda()
+                    c_pos = c_pos.cuda()
+                    c_ner = c_ner.cuda()
+                    c_char = c_char.cuda()
+                    c_em = c_em.cuda()
+                    c_mask = c_mask.cuda()
+                    q_vec = q_vec.cuda()
+                    q_pos = q_pos.cuda()
+                    q_ner = q_ner.cuda()
+                    q_char = q_char.cuda()
+                    q_em = q_em.cuda()
+                    q_mask = q_mask.cuda()
 
-            pred_start, pred_end = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask)
+                pred_start, pred_end = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask)
 
-            batch_score = compute_scores(rouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
-            rouge_scores += batch_score
-            dev_start_acc += torch.sum(torch.eq(pred_start.cpu(), start)).item()
-            dev_end_acc += torch.sum(torch.eq(pred_end.cpu(), end)).item()
-        avg_rouge = rouge_scores / len(dev)
-        dev_start_acc /= len(dev)
-        dev_end_acc /= len(dev)
-        logger.info("iter %r: dev average rouge score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, dev_start_acc, dev_end_acc, time.time() - start_time))
-        if avg_rouge > best:
-            best = avg_rouge
-            torch.save(model, 'best_model')
+                batch_score = compute_scores(rouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
+                rouge_scores += batch_score
+                dev_start_acc += torch.sum(torch.eq(pred_start.cpu(), start)).item()
+                dev_end_acc += torch.sum(torch.eq(pred_end.cpu(), end)).item()
+            avg_rouge = rouge_scores / len(dev)
+            dev_start_acc /= len(dev)
+            dev_end_acc /= len(dev)
+            logger.info("iter %r: dev average rouge score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, dev_start_acc, dev_end_acc, time.time() - start_time))
+            if avg_rouge > best:
+                best = avg_rouge
+                torch.save(model, 'best_model2')
 
 
 if __name__ == '__main__':
