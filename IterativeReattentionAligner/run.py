@@ -11,6 +11,7 @@ import argparse
 import logging
 from encoder import MnemicReader
 import cProfile, pstats, io
+from bleu import compute_bleu
 
 stoplist = set(['.',',', '...', '..'])
 
@@ -166,7 +167,9 @@ def pad_sequence(sentences, pos, ner, char, em):
     return torch.as_tensor(sent_batch), torch.as_tensor(pos_batch), torch.as_tensor(ner_batch), torch.as_tensor(em_batch), torch.as_tensor(char_batch), torch.as_tensor(masks)
 
 def compute_scores(rouge, start, end, context, a1, a2):
-    score = 0.0
+    rouge_score = 0.0
+    bleu1 = 0.0
+    bleu4 = 0.0
     for i in range(0, len(start)):
         #print (context[i])
         #print (start[i], end[i])
@@ -178,8 +181,10 @@ def compute_scores(rouge, start, end, context, a1, a2):
         if predicted_span in stoplist:
             predicted_span = 'NO-ANSWER-FOUND'
         #print ("Sample output " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
-        score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
-    return score
+        rouge_score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
+        bleu1 += compute_bleu([[a1[i],a2[i]]], [predicted_span], max_order=1)[0]
+        bleu4 += compute_bleu([[a1[i],a2[i]]], [predicted_span])[0]
+    return (rouge_score, bleu1, bleu4)
 
 
 def main(args):
@@ -283,6 +288,8 @@ def main(args):
             dev_start_acc = 0.0
             dev_end_acc = 0.0
             rouge_scores = 0.0
+            bleu1_scores = 0.0
+            bleu4_scores = 0.0
             for batch in dev_loader:
                 c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2 = batch
                 c_vec, c_pos, c_ner, c_em, c_char, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
@@ -309,13 +316,17 @@ def main(args):
 
 
                 batch_score = compute_scores(rouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
-                rouge_scores += batch_score
+                rouge_scores += batch_score[0]
+                bleu1_scores += batch_score[1]
+                bleu4_scores += batch_score[2]
                 dev_start_acc += torch.sum(torch.eq(pred_start.cpu(), start)).item()
                 dev_end_acc += torch.sum(torch.eq(pred_end.cpu(), end)).item()
             avg_rouge = rouge_scores / len(dev)
             dev_start_acc /= len(dev)
             dev_end_acc /= len(dev)
-            logger.info("iter %r: dev average rouge score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, dev_start_acc, dev_end_acc, time.time() - start_time))
+            avg_bleu1 = bleu1_scores / len(dev)
+            avg_bleu4 = bleu4_scores / len(dev)
+            logger.info("iter %r: dev average rouge score %.4f, bleu1 score %.4f, bleu4 score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, avg_bleu1, avg_bleu4, dev_start_acc, dev_end_acc, time.time() - start_time))
             scheduler.step(avg_rouge)
             if avg_rouge > best:
                 best = avg_rouge
