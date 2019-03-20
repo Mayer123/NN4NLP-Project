@@ -39,7 +39,8 @@ class MnemicReader(nn.Module):
 
         self.char_lstm = nn.LSTM(char_emb_dim, char_emb_dim, num_layers=1, bidirectional=True)
         self.aligningBlock = IterativeAligner( 2 * hidden_size, hidden_size, 1, 3, dropout=rnn_dropout)
-        self.loss = nn.CrossEntropyLoss()
+
+        self.loss = nn.NLLLoss()
         self.DCRL_loss = DCRLLoss(5)
 
         self.rnn_dropout = nn.Dropout(rnn_dropout)
@@ -107,7 +108,7 @@ class MnemicReader(nn.Module):
         #print (torch.sum(q_em, dim=1))
 
         #print (c_mask.device, q_mask.device)
-        s_prob, e_prob = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
+        probs = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
         #print (s_prob.shape, e_prob.shape)
         #print (start, end)
         #print (torch.gather(s_prob.squeeze(), 1, start.unsqueeze(1)))
@@ -116,14 +117,16 @@ class MnemicReader(nn.Module):
         #print (end)
         #s_prob = torch.log(s_prob)
         #e_prob = torch.log(e_prob)
-        s_prob = torch.squeeze(s_prob)
-        e_prob = torch.squeeze(e_prob)
-        loss1 = self.loss(s_prob, start)
-        loss2 = self.loss(e_prob, end)
-        #print (s_prob)
+
+        context_len = enc_con.shape[1]
+        loss = self.loss(probs, start*context_len + end)
+        return loss
+        # loss1 = self.loss(s_prob, start)
+        # loss2 = self.loss(e_prob, end)
+        
         s_prob = torch.nn.functional.softmax(s_prob, dim=1)
         e_prob = torch.nn.functional.softmax(e_prob, dim=1)
-        #print (s_prob)
+        
         s_prob = s_prob * c_mask.float()
         e_prob = e_prob * c_mask.float()
         #rl_loss = self.DCRL_loss(s_prob, e_prob, start, end, context)
@@ -188,7 +191,14 @@ class MnemicReader(nn.Module):
         #print (torch.sum(c_em, dim=1))
         #print (torch.sum(q_em, dim=1))
         #print (c_mask.device, q_mask.device)
-        s_prob, e_prob = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
+        pointer_probs = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
+
+        context_len = enc_con.shape[1]
+        max_idx = torch.argmax(pointer_probs, dim=1)
+        s_index = max_idx // context_len
+        e_index = max_idx % context_len
+        return s_index, e_index
+
         #loss1 = self.loss(s_prob.squeeze(), start)
         #loss2 = self.loss(e_prob.squeeze(), end)
         s_prob = torch.squeeze(s_prob)
