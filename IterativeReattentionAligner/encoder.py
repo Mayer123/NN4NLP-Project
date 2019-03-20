@@ -25,6 +25,9 @@ class MnemicReader(nn.Module):
         self.aligningBlock = IterativeAligner( 2 * hidden_size, hidden_size, 1, 3)
         self.loss = nn.CrossEntropyLoss()
         self.DCRL_loss = DCRLLoss(5)
+        self.weight_a = torch.pow(torch.randn(1, requires_grad=True), 2)
+        self.weight_b = torch.pow(torch.randn(1, requires_grad=True), 2)
+        self.half = torch.tensor(0.5)
 
         for i in range(num_layers):
             lstm = nn.LSTM(input_size, hidden_size, num_layers=1, bidirectional=True)
@@ -105,12 +108,13 @@ class MnemicReader(nn.Module):
         #print (s_prob)
         s_prob = s_prob * c_mask.float()
         e_prob = e_prob * c_mask.float()
-        #rl_loss = self.DCRL_loss(s_prob, e_prob, start, end, context)
+        rl_loss = self.DCRL_loss(s_prob, e_prob, start, end, context)
         #_, s_index = torch.max(torch.squeeze(s_prob), dim=1)
         #_, e_index = torch.max(torch.squeeze(e_prob), dim=1)
         #print (loss1, loss2)
         #loss = (start - s_index)**2 + (end - e_index)**2
-        return loss1 + loss2
+        loss = (loss1+loss2)*self.weight_a.pow(-1)*self.half+rl_loss*self.weight_b.pow(-1)*self.half+torch.log(self.weight_a)+torch.log(self.weight_b)
+        return loss
 
     def evaluate(self, c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask):
         '''

@@ -282,7 +282,7 @@ def main(args):
             logger.info("iter %r: dev average rouge score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, dev_start_acc, dev_end_acc, time.time() - start_time))
             if avg_rouge > best:
                 best = avg_rouge
-                torch.save(model, 'best_model2')
+                torch.save(model, 'best_model')
 
 
 if __name__ == '__main__':
