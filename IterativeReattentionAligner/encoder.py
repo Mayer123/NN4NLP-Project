@@ -121,16 +121,16 @@ class MnemicReader(nn.Module):
         #s_prob = torch.log(s_prob)
         #e_prob = torch.log(e_prob)
 
-        #context_len = enc_con.shape[1]
+        context_len = enc_con.shape[1]
         loss = self.loss(probs, start*context_len + end)
-        #return loss
-        # s_prob = torch.squeeze(s_prob)
-        # e_prob = torch.squeeze(e_prob)
+        return loss
+        s_prob = torch.squeeze(s_prob)
+        e_prob = torch.squeeze(e_prob)
         # loss1 = self.loss(s_prob, start)
         # loss2 = self.loss(e_prob, end)
         
-        s_prob = torch.nn.functional.softmax(s_prob, dim=1)
-        e_prob = torch.nn.functional.softmax(e_prob, dim=1)
+        # s_prob = torch.nn.functional.softmax(s_prob, dim=1)
+        # e_prob = torch.nn.functional.softmax(e_prob, dim=1)
         
         s_prob = s_prob * c_mask.float()
         e_prob = e_prob * c_mask.float()
