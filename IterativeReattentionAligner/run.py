@@ -13,7 +13,6 @@ from encoder import MnemicReader
 import cProfile, pstats, io
 
 stoplist = set(['.',',', '...', '..'])
-logger = logging.getLogger()
 
 class TextDataset(torch.utils.data.Dataset):
 
@@ -43,6 +42,7 @@ def add_arguments(parser):
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
     parser.add_argument('--pos_emb_size', type=int, default=20, help='Embedding size for pos tags')
     parser.add_argument('--ner_emb_size', type=int, default=20, help='Embedding size for ner')
+    parser.add_argument('--log_file', type=str, default="RMR.log", help='path to the log file')
 
 def build_dicts(data):    
     w2i = Counter()
@@ -165,6 +165,15 @@ def compute_scores(rouge, start, end, context, a1, a2):
 
 
 def main(args):
+    global logger
+    
+    logger = logging.getLogger()
+    fh = logging.FileHandler(args.log_file)
+    fh.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+
     logger.info('-' * 100)
     logger.info('Loading data')
     with open(args.train_file, 'r') as f:
@@ -200,7 +209,7 @@ def main(args):
                             emb_dropout=0.3, rnn_dropout=0.3)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
-                                                            factor=0.5, patience=3,
+                                                            factor=0.5, patience=0,
                                                             verbose=True)
     if use_cuda:
         torch.cuda.manual_seed(args.seed)
@@ -277,6 +286,7 @@ def main(args):
                     q_mask = q_mask.cuda()
 
                 pred_start, pred_end = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask)
+
 
                 batch_score = compute_scores(rouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
                 rouge_scores += batch_score
