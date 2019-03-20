@@ -113,6 +113,9 @@ class MnemicReader(nn.Module):
         #_, e_index = torch.max(torch.squeeze(e_prob), dim=1)
         #print (loss1, loss2)
         #loss = (start - s_index)**2 + (end - e_index)**2
+        print (self.weight_a)
+        print (self.weight_b)
+        print (self.half)
         loss = (loss1+loss2)*self.weight_a.pow(-1)*self.half+rl_loss*self.weight_b.pow(-1)*self.half+torch.log(self.weight_a)+torch.log(self.weight_b)
         return loss
 
