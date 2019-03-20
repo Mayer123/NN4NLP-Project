@@ -209,7 +209,7 @@ def main(args):
         train_loss = 0.0
         start_time = time.time()
         model.train()
-        for batch in train_loader:
+        for batch in tqdm.tqdm(train_loader):
             global_step += 1
             #print (global_step)
             c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2 = batch
@@ -240,7 +240,7 @@ def main(args):
             batch_loss.backward()
             #torch.nn.utils.clip_grad_norm_(model.parameters(),10)
             optimizer.step()
-            logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
+            #logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
 
         logger.info("iter %r global_step %s : train loss/batch=%.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), time.time() - start_time))
         model.eval()

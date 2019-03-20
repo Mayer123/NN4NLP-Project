@@ -1,0 +1,96 @@
+2019-03-19 15:00:17,172 - root - INFO - ----------------------------------------------------------------------------------------------------
+2019-03-19 15:00:17,172 - root - INFO - Loading data
+2019-03-19 15:00:17,679 - root - INFO - Converting to index
+2019-03-19 15:00:21,188 - root - INFO - Generating embeddings
+2019-03-19 15:00:23,861 - root - INFO - Total vocab size 4689 pre-trained words 4575
+2019-03-19 15:00:55,049 - root - INFO - Start training
+2019-03-19 15:00:55,049 - root - INFO - ----------------------------------------------------------------------------------------------------
+4689 41 13 69
+2019-03-19 15:00:55,616 - root - INFO - iter 0 global_step 1 : batch loss=12.8644, time=0.57s
+2019-03-19 15:01:01,361 - root - INFO - iter 0 global_step 2 : batch loss=12.8784, time=6.31s
+2019-03-19 15:01:02,186 - root - INFO - iter 0 global_step 3 : batch loss=12.4568, time=7.14s
+2019-03-19 15:01:02,549 - root - INFO - iter 0 global_step 4 : batch loss=12.4388, time=7.50s
+2019-03-19 15:01:02,896 - root - INFO - iter 0 global_step 5 : batch loss=12.4034, time=7.85s
+2019-03-19 15:01:03,235 - root - INFO - iter 0 global_step 6 : batch loss=12.2076, time=8.19s
+2019-03-19 15:01:03,583 - root - INFO - iter 0 global_step 7 : batch loss=12.0476, time=8.53s
+2019-03-19 15:01:03,939 - root - INFO - iter 0 global_step 8 : batch loss=11.9399, time=8.89s
+2019-03-19 15:01:04,276 - root - INFO - iter 0 global_step 9 : batch loss=13.1587, time=9.23s
+2019-03-19 15:01:04,649 - root - INFO - iter 0 global_step 10 : batch loss=12.3896, time=9.60s
+2019-03-19 15:01:04,996 - root - INFO - iter 0 global_step 11 : batch loss=12.5183, time=9.95s
+2019-03-19 15:01:05,347 - root - INFO - iter 0 global_step 12 : batch loss=12.6401, time=10.30s
+2019-03-19 15:01:05,716 - root - INFO - iter 0 global_step 13 : batch loss=12.5719, time=10.67s
+2019-03-19 15:01:06,029 - root - INFO - iter 0 global_step 14 : batch loss=12.6070, time=10.98s
+2019-03-19 15:01:06,338 - root - INFO - iter 0 global_step 15 : batch loss=12.7700, time=11.29s
+2019-03-19 15:01:06,640 - root - INFO - iter 0 global_step 16 : batch loss=12.6208, time=11.59s
+2019-03-19 15:01:06,951 - root - INFO - iter 0 global_step 17 : batch loss=12.5971, time=11.90s
+2019-03-19 15:01:07,255 - root - INFO - iter 0 global_step 18 : batch loss=12.7645, time=12.21s
+2019-03-19 15:01:07,558 - root - INFO - iter 0 global_step 19 : batch loss=12.7303, time=12.51s
+2019-03-19 15:01:07,865 - root - INFO - iter 0 global_step 20 : batch loss=12.9567, time=12.82s
+2019-03-19 15:01:08,175 - root - INFO - iter 0 global_step 21 : batch loss=12.6110, time=13.13s
+2019-03-19 15:01:08,500 - root - INFO - iter 0 global_step 22 : batch loss=12.5533, time=13.45s
+2019-03-19 15:01:08,832 - root - INFO - iter 0 global_step 23 : batch loss=12.8235, time=13.78s
+2019-03-19 15:01:09,158 - root - INFO - iter 0 global_step 24 : batch loss=12.4865, time=14.11s
+2019-03-19 15:01:09,467 - root - INFO - iter 0 global_step 25 : batch loss=12.5557, time=14.42s
+2019-03-19 15:01:09,772 - root - INFO - iter 0 global_step 26 : batch loss=12.3760, time=14.72s
+2019-03-19 15:01:10,082 - root - INFO - iter 0 global_step 27 : batch loss=12.6989, time=15.03s
+2019-03-19 15:01:10,394 - root - INFO - iter 0 global_step 28 : batch loss=12.1710, time=15.34s
+2019-03-19 15:01:10,697 - root - INFO - iter 0 global_step 29 : batch loss=12.6943, time=15.65s
+2019-03-19 15:01:11,000 - root - INFO - iter 0 global_step 30 : batch loss=12.1928, time=15.95s
+2019-03-19 15:01:11,301 - root - INFO - iter 0 global_step 31 : batch loss=11.9222, time=16.25s
+2019-03-19 15:01:11,618 - root - INFO - iter 0 global_step 32 : batch loss=12.2420, time=16.57s
+2019-03-19 15:01:11,947 - root - INFO - iter 0 global_step 33 : batch loss=12.5461, time=16.90s
+2019-03-19 15:01:12,269 - root - INFO - iter 0 global_step 34 : batch loss=11.9402, time=17.22s
+2019-03-19 15:01:12,590 - root - INFO - iter 0 global_step 35 : batch loss=11.8365, time=17.54s
+2019-03-19 15:01:12,895 - root - INFO - iter 0 global_step 36 : batch loss=11.9570, time=17.85s
+2019-03-19 15:01:13,202 - root - INFO - iter 0 global_step 37 : batch loss=12.1831, time=18.15s
+2019-03-19 15:01:13,508 - root - INFO - iter 0 global_step 38 : batch loss=11.5207, time=18.46s
+2019-03-19 15:01:13,815 - root - INFO - iter 0 global_step 39 : batch loss=12.1036, time=18.77s
+2019-03-19 15:01:14,114 - root - INFO - iter 0 global_step 40 : batch loss=11.3454, time=19.06s
+2019-03-19 15:01:14,415 - root - INFO - iter 0 global_step 41 : batch loss=11.4875, time=19.37s
+2019-03-19 15:01:14,716 - root - INFO - iter 0 global_step 42 : batch loss=11.0533, time=19.67s
+2019-03-19 15:01:15,291 - root - INFO - iter 0 global_step 43 : batch loss=11.7870, time=20.24s
+2019-03-19 15:01:15,619 - root - INFO - iter 0 global_step 44 : batch loss=12.2265, time=20.57s
+2019-03-19 15:01:15,947 - root - INFO - iter 0 global_step 45 : batch loss=11.2197, time=20.90s
+2019-03-19 15:01:16,274 - root - INFO - iter 0 global_step 46 : batch loss=11.6664, time=21.22s
+2019-03-19 15:01:16,586 - root - INFO - iter 0 global_step 47 : batch loss=11.7109, time=21.54s
+2019-03-19 15:01:16,903 - root - INFO - iter 0 global_step 48 : batch loss=12.0639, time=21.85s
+2019-03-19 15:01:17,211 - root - INFO - iter 0 global_step 49 : batch loss=11.7951, time=22.16s
+2019-03-19 15:01:17,526 - root - INFO - iter 0 global_step 50 : batch loss=12.4835, time=22.48s
+2019-03-19 15:01:17,831 - root - INFO - iter 0 global_step 51 : batch loss=11.2902, time=22.78s
+2019-03-19 15:01:18,133 - root - INFO - iter 0 global_step 52 : batch loss=10.9037, time=23.08s
+2019-03-19 15:01:18,436 - root - INFO - iter 0 global_step 53 : batch loss=11.7057, time=23.39s
+2019-03-19 15:01:18,748 - root - INFO - iter 0 global_step 54 : batch loss=11.6159, time=23.70s
+2019-03-19 15:01:19,069 - root - INFO - iter 0 global_step 55 : batch loss=11.9161, time=24.02s
+2019-03-19 15:01:19,373 - root - INFO - iter 0 global_step 56 : batch loss=11.0048, time=24.32s
+2019-03-19 15:01:19,688 - root - INFO - iter 0 global_step 57 : batch loss=11.0546, time=24.64s
+2019-03-19 15:01:20,003 - root - INFO - iter 0 global_step 58 : batch loss=11.6170, time=24.95s
+2019-03-19 15:01:20,286 - root - INFO - iter 0 global_step 59 : batch loss=10.9300, time=25.24s
+2019-03-19 15:01:20,391 - root - INFO - iter 0 global_step 59 : train loss/batch=12.1331, time=25.34s
+2019-03-19 15:01:44,094 - root - INFO - iter 0: dev average rouge score 0.0424, start acc 0.0350, end acc 0.0450 time=49.04s
+2019-03-19 15:01:44,784 - root - INFO - iter 1 global_step 60 : batch loss=10.4935, time=0.47s
+2019-03-19 15:01:45,104 - root - INFO - iter 1 global_step 61 : batch loss=10.9671, time=0.79s
+2019-03-19 15:01:45,444 - root - INFO - iter 1 global_step 62 : batch loss=10.4944, time=1.13s
+2019-03-19 15:01:45,746 - root - INFO - iter 1 global_step 63 : batch loss=10.2713, time=1.43s
+2019-03-19 15:01:46,055 - root - INFO - iter 1 global_step 64 : batch loss=10.9227, time=1.74s
+2019-03-19 15:01:46,362 - root - INFO - iter 1 global_step 65 : batch loss=11.4401, time=2.05s
+2019-03-19 15:01:46,670 - root - INFO - iter 1 global_step 66 : batch loss=10.2705, time=2.36s
+2019-03-19 15:01:46,970 - root - INFO - iter 1 global_step 67 : batch loss=9.5230, time=2.66s
+2019-03-19 15:01:47,273 - root - INFO - iter 1 global_step 68 : batch loss=11.6851, time=2.96s
+2019-03-19 15:01:47,582 - root - INFO - iter 1 global_step 69 : batch loss=11.0632, time=3.27s
+2019-03-19 15:01:47,900 - root - INFO - iter 1 global_step 70 : batch loss=10.7272, time=3.59s
+2019-03-19 15:01:48,223 - root - INFO - iter 1 global_step 71 : batch loss=10.6917, time=3.91s
+2019-03-19 15:01:48,550 - root - INFO - iter 1 global_step 72 : batch loss=10.3799, time=4.24s
+2019-03-19 15:01:48,881 - root - INFO - iter 1 global_step 73 : batch loss=10.6475, time=4.57s
+2019-03-19 15:01:49,194 - root - INFO - iter 1 global_step 74 : batch loss=10.7781, time=4.88s
+2019-03-19 15:01:49,501 - root - INFO - iter 1 global_step 75 : batch loss=10.9327, time=5.19s
+2019-03-19 15:01:49,810 - root - INFO - iter 1 global_step 76 : batch loss=11.5378, time=5.50s
+2019-03-19 15:01:50,129 - root - INFO - iter 1 global_step 77 : batch loss=10.8928, time=5.82s
+2019-03-19 15:01:50,433 - root - INFO - iter 1 global_step 78 : batch loss=11.5906, time=6.12s
+2019-03-19 15:01:50,736 - root - INFO - iter 1 global_step 79 : batch loss=11.3623, time=6.42s
+2019-03-19 15:01:51,041 - root - INFO - iter 1 global_step 80 : batch loss=11.4570, time=6.73s
+2019-03-19 15:01:51,353 - root - INFO - iter 1 global_step 81 : batch loss=10.9056, time=7.04s
+2019-03-19 15:01:51,680 - root - INFO - iter 1 global_step 82 : batch loss=11.0082, time=7.37s
+2019-03-19 15:01:52,316 - root - INFO - iter 1 global_step 83 : batch loss=11.1949, time=8.00s
+2019-03-19 15:01:52,634 - root - INFO - iter 1 global_step 84 : batch loss=10.6695, time=8.32s
+2019-03-19 15:01:52,936 - root - INFO - iter 1 global_step 85 : batch loss=11.0753, time=8.62s
+2019-03-19 15:01:53,239 - root - INFO - iter 1 global_step 86 : batch loss=10.2762, time=8.93s

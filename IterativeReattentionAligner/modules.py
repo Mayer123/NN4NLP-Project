@@ -63,13 +63,13 @@ class InteractiveAligner(nn.Module):
         u_proj = u_proj * u_mask
 
         # E.shape = B x n x m
-        E = getAligmentMatrix(v_proj, u_proj, mask=v_mask, prev=prev)        
+        E = getAligmentMatrix(v_proj, u_proj, mask=v_mask, prev=prev)  #q_tilde 
 
         attended_v = torch.bmm(v.transpose(1,2), E).transpose(1,2)
         attended_v = attended_v * u_mask
         # print E[4], v[4], attended_v[4]
         # print "batch_size=%d, m=%d, dim=%d" % (attended_v.shape[0], attended_v.shape[1], attended_v.shape[2])
-        fused_u = self.fusion(u, attended_v)        
+        fused_u = self.fusion(u, attended_v)  
         # print u_lens[1], u[1], attended_v[1], fused_u[1]
         #print "batch_size=%d, n=%d, dim=%d" % (fused_u.shape[0], fused_u.shape[1], fused_u.shape[2])       
         return fused_u, u_lens, E
