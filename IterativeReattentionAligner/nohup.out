@@ -1,0 +1,14 @@
+2019-03-19 23:39:06,555 - root - INFO - ----------------------------------------------------------------------------------------------------
+2019-03-19 23:39:06,555 - root - INFO - Loading data
+2019-03-19 23:39:23,044 - root - INFO - Converting to index
+2019-03-19 23:40:56,451 - root - INFO - Generating embeddings
+2019-03-19 23:40:59,836 - root - INFO - Total vocab size 35887 pre-trained words 31891
+2019-03-19 23:41:05,622 - root - INFO - Start training
+2019-03-19 23:41:05,622 - root - INFO - ----------------------------------------------------------------------------------------------------
+35887 43 18 192
+2019-03-19 23:42:16,770 - root - INFO - iter 0 global_step 100 : batch loss=11.8428, time=71.15s
+2019-03-19 23:43:17,877 - root - INFO - iter 0 global_step 200 : batch loss=10.4319, time=132.25s
+2019-03-19 23:44:18,921 - root - INFO - iter 0 global_step 300 : batch loss=10.2595, time=193.30s
+2019-03-19 23:45:26,517 - root - INFO - iter 0 global_step 400 : batch loss=9.2674, time=260.89s
+2019-03-19 23:46:27,705 - root - INFO - iter 0 global_step 500 : batch loss=7.8181, time=322.08s
+2019-03-19 23:47:28,895 - root - INFO - iter 0 global_step 600 : batch loss=9.0498, time=383.27s
