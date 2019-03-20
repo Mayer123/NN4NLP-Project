@@ -154,8 +154,8 @@ class AnswerPointer(nn.Module):
         catted = torch.cat((r, s, r*s, r-s), dim=2)
         score1 = mlp(catted)
         r_mask = output_mask(r_lens).unsqueeze(2)               
-        p = masked_softmax(score1, r_mask, 1)
-        # p = torch.exp(score1) * r_mask
+        # p = masked_softmax(score1, r_mask, 1)
+        p = torch.exp(score1) * r_mask
         return p
 
     def forward(self, v, v_lens, R, r_lens):
@@ -167,14 +167,14 @@ class AnswerPointer(nn.Module):
         st = self.fusion(s, l)
         p2 = self.computeP(st, R, r_lens, self.mlp2)        
 
-        p = torch.bmm(p1, p2.transpose(1,2))
+        #p = torch.bmm(p1, p2.transpose(1,2))
 
-        eps = 1e-8
-        p = (1-eps)*p + eps*torch.min(p[p != 0])
-        p = torch.log(p)
-        p = p.view(p.shape[0], -1)
+        #eps = 1e-8
+        #p = (1-eps)*p + eps*torch.min(p[p != 0])
+        #p = torch.log(p)
+        #p = p.view(p.shape[0], -1)
 
-        return p
+        return p1, p2
 
         
 class AligningBlock(nn.Module):
@@ -246,10 +246,10 @@ class IterativeAligner(nn.Module):
                                                          r_lens, v_lens, Et=Et,
                                                          Bt=Bt, prev_Zs=Zs)
         
-        p = self.answer_pointer(v, v_lens, R, r_lens)        
+        p1, p2 = self.answer_pointer(v, v_lens, R, r_lens)        
         # print "p1.shape", p1.shape
         # print 'p2.shape', p2.shape
-        return p
+        return p1, p2
         
 
 if __name__ == '__main__':

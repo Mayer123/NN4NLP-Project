@@ -10,7 +10,7 @@ class MnemicReader(nn.Module):
     ## model(c_vec, c_pos, c_ner, c_em, c_mask, q_vec, q_pos, q_ner, q_em, q_mask, start, end)
     def __init__(self, input_size, hidden_size, num_layers, char_emb_dim, 
                     pos_emb_dim, ner_emb_dim, word_embeddings, num_char, 
-                    num_pos, num_ner, emb_dropout=0, rnn_dropout=0):
+                    num_pos, num_ner, emb_dropout, rnn_dropout):
         super(MnemicReader, self).__init__()
         self.num_layers = num_layers
         self.rnn = nn.ModuleList()            
@@ -40,8 +40,11 @@ class MnemicReader(nn.Module):
         self.char_lstm = nn.LSTM(char_emb_dim, char_emb_dim, num_layers=1, bidirectional=True)
         self.aligningBlock = IterativeAligner( 2 * hidden_size, hidden_size, 1, 3, dropout=rnn_dropout)
 
-        self.loss = nn.NLLLoss()
+        self.loss = nn.CrossEntropyLoss()
         self.DCRL_loss = DCRLLoss(5)
+        self.weight_a = torch.randn(1, requires_grad=True)
+        self.weight_b = torch.randn(1, requires_grad=True)
+        self.half = torch.tensor(0.5)
 
         self.rnn_dropout = nn.Dropout(rnn_dropout)
 
@@ -108,7 +111,7 @@ class MnemicReader(nn.Module):
         #print (torch.sum(q_em, dim=1))
 
         #print (c_mask.device, q_mask.device)
-        probs = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
+        s_prob, e_prob = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
         #print (s_prob.shape, e_prob.shape)
         #print (start, end)
         #print (torch.gather(s_prob.squeeze(), 1, start.unsqueeze(1)))
@@ -118,23 +121,33 @@ class MnemicReader(nn.Module):
         #s_prob = torch.log(s_prob)
         #e_prob = torch.log(e_prob)
 
-        context_len = enc_con.shape[1]
-        loss = self.loss(probs, start*context_len + end)
-        return loss
-        # loss1 = self.loss(s_prob, start)
-        # loss2 = self.loss(e_prob, end)
+        #context_len = enc_con.shape[1]
+        #loss = self.loss(probs, start*context_len + end)
+        #return loss
+        s_prob = torch.squeeze(s_prob)
+        e_prob = torch.squeeze(e_prob)
+        loss1 = self.loss(s_prob, start)
+        loss2 = self.loss(e_prob, end)
         
         s_prob = torch.nn.functional.softmax(s_prob, dim=1)
         e_prob = torch.nn.functional.softmax(e_prob, dim=1)
         
         s_prob = s_prob * c_mask.float()
         e_prob = e_prob * c_mask.float()
-        #rl_loss = self.DCRL_loss(s_prob, e_prob, start, end, context)
+        rl_loss = self.DCRL_loss(s_prob, e_prob, start, end, context)
         #_, s_index = torch.max(torch.squeeze(s_prob), dim=1)
         #_, e_index = torch.max(torch.squeeze(e_prob), dim=1)
         #print (loss1, loss2)
         #loss = (start - s_index)**2 + (end - e_index)**2
-        return loss1 + loss2
+        self.weight_a = self.weight_a.to(rl_loss.device)
+        self.weight_b = self.weight_b.to(rl_loss.device)
+        self.half = self.half.to(rl_loss.device)
+        a1 = torch.pow(self.weight_a, -2) * self.half
+        a2 = torch.pow(self.weight_b, -2) * self.half
+        b1 = torch.log(torch.pow(self.weight_a, 2))
+        b2 = torch.log(torch.pow(self.weight_b, 2))
+        #total_loss = (loss1+loss2)*self.weight_a+rl_loss*self.weight_b
+        return (loss1 + loss2) * a1 + rl_loss * a2 + b1 + b2
 
     def evaluate(self, c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask):
         '''
@@ -191,13 +204,13 @@ class MnemicReader(nn.Module):
         #print (torch.sum(c_em, dim=1))
         #print (torch.sum(q_em, dim=1))
         #print (c_mask.device, q_mask.device)
-        pointer_probs = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
+        s_prob, e_prob = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
 
-        context_len = enc_con.shape[1]
-        max_idx = torch.argmax(pointer_probs, dim=1)
-        s_index = max_idx // context_len
-        e_index = max_idx % context_len
-        return s_index, e_index
+        #context_len = enc_con.shape[1]
+        #max_idx = torch.argmax(pointer_probs, dim=1)
+        #s_index = max_idx // context_len
+        #e_index = max_idx % context_len
+        #return s_index, e_index
 
         #loss1 = self.loss(s_prob.squeeze(), start)
         #loss2 = self.loss(e_prob.squeeze(), end)
