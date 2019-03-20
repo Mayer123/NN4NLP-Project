@@ -11,9 +11,12 @@ import argparse
 import logging
 from encoder import MnemicReader
 import cProfile, pstats, io
-from bleu import compute_bleu
+#from bleu import compute_bleu
+from nltk.translate.bleu_score import sentence_bleu
 
 stoplist = set(['.',',', '...', '..'])
+
+
 
 class TextDataset(torch.utils.data.Dataset):
 
@@ -36,8 +39,8 @@ def add_arguments(parser):
     parser.add_argument('--dicts_dir', type=str, default=None, help='Directory containing the word dictionaries')
     parser.add_argument('--seed', type=int, default=6, help='Random seed for the experiment')
     parser.add_argument('--epochs', type=int, default=5, help='Train data iterations')
-    parser.add_argument('--train_batch_size', type=int, default=16, help='Batch size for training')
-    parser.add_argument('--dev_batch_size', type=int, default=16, help='Batch size for dev')
+    parser.add_argument('--train_batch_size', type=int, default=32, help='Batch size for training')
+    parser.add_argument('--dev_batch_size', type=int, default=32, help='Batch size for dev')
     parser.add_argument('--hidden_size', type=int, default=100, help='Hidden size for LSTM')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of layers for LSTM')
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
@@ -182,8 +185,10 @@ def compute_scores(rouge, start, end, context, a1, a2):
             predicted_span = 'NO-ANSWER-FOUND'
         #print ("Sample output " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
         rouge_score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
-        bleu1 += compute_bleu([[a1[i],a2[i]]], [predicted_span], max_order=1)[0]
-        bleu4 += compute_bleu([[a1[i],a2[i]]], [predicted_span])[0]
+        bleu1 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(1, 0, 0, 0))
+        bleu4 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(0.25, 0.25, 0.25, 0.25))
+        #bleu1 += compute_bleu([[a1[i],a2[i]]], [predicted_span], max_order=1)[0]
+        #bleu4 += compute_bleu([[a1[i],a2[i]]], [predicted_span])[0]
     return (rouge_score, bleu1, bleu4)
 
 
