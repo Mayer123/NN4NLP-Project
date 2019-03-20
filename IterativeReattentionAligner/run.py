@@ -40,8 +40,10 @@ def add_arguments(parser):
     parser.add_argument('--hidden_size', type=int, default=100, help='Hidden size for LSTM')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of layers for LSTM')
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
-    parser.add_argument('--pos_emb_size', type=int, default=20, help='Embedding size for pos tags')
-    parser.add_argument('--ner_emb_size', type=int, default=20, help='Embedding size for ner')
+    parser.add_argument('--pos_emb_size', type=int, default=50, help='Embedding size for pos tags')
+    parser.add_argument('--ner_emb_size', type=int, default=50, help='Embedding size for ner')
+    parser.add_argument('--emb_dropout', type=float, default=0.3, help='Dropout rate for embedding layers')
+    parser.add_argument('--rnn_dropout', type=float, default=0.3, help='Dropout rate for RNN layers')
     parser.add_argument('--log_file', type=str, default="RMR.log", help='path to the log file')
 
 def build_dicts(data):    
@@ -95,19 +97,35 @@ def convert_data(data, w2i, tag2i, ner2i, c2i, max_len=-1):
         question_ner_vec = [ner2i[e] if e in ner2i else 1 for e in sample['question_ner']]
         question_character = [[c2i[c] if c in c2i else 1 for c in w] for w in sample['question_tokens']]
         context_em = sample['context_em_feature']
-        if max_len != -1 and len(context_vector) > max_len:
-            if sample['start_index'] >= max_len or sample['end_index'] >= max_len:
-                continue
-            context_vector = context_vector[:max_len]
-            context_pos_vec = context_pos_vec[:max_len]
-            context_ner_vec = context_ner_vec[:max_len]
-            context_character = context_character[:max_len]
-            context_em = context_em[:max_len]
+        context_tokens = sample['context_tokens']
         answer1 = sample['answers'][0].lower()
         answer2 = sample['answers'][1].lower()
+        ans_start = sample['start_index']
+        ans_end = sample['end_index']
+        if max_len != -1 and len(context_vector) > max_len:
+            if sample['start_index'] >= max_len or sample['end_index'] >= max_len: 
+                new_start = len(context_vector) - max_len
+                if new_start > sample['start_index']:
+                    print('This context is too long')
+                    print (current_len)
+                context_vector = context_vector[new_start:new_start+max_len]
+                context_pos_vec = context_pos_vec[new_start:new_start+max_len]
+                context_ner_vec = context_ner_vec[new_start:new_start+max_len]
+                context_character = context_character[new_start:new_start+max_len]
+                context_em = context_em[new_start:new_start+max_len]
+                context_tokens = context_tokens[new_start:new_start+max_len]
+                ans_start = ans_start - new_start
+                ans_end = ans_end - new_start
+            else:
+                context_vector = context_vector[:max_len]
+                context_pos_vec = context_pos_vec[:max_len]
+                context_ner_vec = context_ner_vec[:max_len]
+                context_character = context_character[:max_len]
+                context_em = context_em[:max_len]
+                context_tokens = context_tokens[:max_len]
         yield (context_vector, context_pos_vec, context_ner_vec, context_character, context_em, \
-            question_vector, question_pos_vec, question_ner_vec, question_character, sample['question_em_feature'], sample['start_index'], sample['end_index'], \
-            sample['context_tokens'], sample['question_tokens'], sample['chosen_answer'], answer1, answer2)
+            question_vector, question_pos_vec, question_ner_vec, question_character, sample['question_em_feature'], ans_start, ans_end, \
+            context_tokens, sample['question_tokens'], sample['chosen_answer'], answer1, answer2)
 
 
 def generate_embeddings(filename, word_dict):
@@ -195,6 +213,8 @@ def main(args):
     print (len(w2i), len(tag2i), len(ner2i), len(c2i))
     train = TextDataset(list(train))
     dev = TextDataset(list(dev))
+    print (len(train))
+    print (len(dev))
     logger.info('Generating embeddings')
     embeddings = generate_embeddings(args.embedding_file, w2i)
     train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=args.train_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
@@ -206,7 +226,7 @@ def main(args):
     model = MnemicReader(input_size, args.hidden_size, args.num_layers, 
                             args.char_emb_size, args.pos_emb_size, args.ner_emb_size, 
                             embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, 
-                            emb_dropout=0.3, rnn_dropout=0.3)
+                            args.emb_dropout, args.rnn_dropout)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
                                                             factor=0.5, patience=0,
@@ -223,7 +243,7 @@ def main(args):
         train_loss = 0.0
         start_time = time.time()
         model.train()
-        for batch in train_loader:
+        for batch in tqdm.tqdm(train_loader):
             global_step += 1
             #print (global_step)
             c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2 = batch
@@ -254,8 +274,8 @@ def main(args):
             batch_loss.backward()
             #torch.nn.utils.clip_grad_norm_(model.parameters(),10)
             optimizer.step()
-            if global_step % 100 == 0:
-                logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
+            #if global_step % 100 == 0:
+            #    logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
 
         logger.info("iter %r global_step %s : train loss/batch=%.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), time.time() - start_time))
         model.eval()
