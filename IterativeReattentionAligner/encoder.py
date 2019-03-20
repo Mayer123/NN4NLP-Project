@@ -8,23 +8,41 @@ from loss import DCRLLoss
 
 class MnemicReader(nn.Module):
     ## model(c_vec, c_pos, c_ner, c_em, c_mask, q_vec, q_pos, q_ner, q_em, q_mask, start, end)
-    def __init__(self, input_size, hidden_size, num_layers, char_emb_dim, pos_emb_dim, ner_emb_dim, word_embeddings, num_char, num_pos, num_ner):
+    def __init__(self, input_size, hidden_size, num_layers, char_emb_dim, 
+                    pos_emb_dim, ner_emb_dim, word_embeddings, num_char, 
+                    num_pos, num_ner, emb_dropout=0, rnn_dropout=0):
         super(MnemicReader, self).__init__()
         self.num_layers = num_layers
-        self.rnn = nn.ModuleList()
-        
-        self.char_emb = nn.Embedding(num_char, char_emb_dim, padding_idx=0)
-        self.pos_emb = nn.Embedding(num_pos, pos_emb_dim, padding_idx=0)
-        self.ner_emb = nn.Embedding(num_ner, ner_emb_dim, padding_idx=0)
+        self.rnn = nn.ModuleList()            
 
-        self.word_embeddings = torch.nn.Embedding(word_embeddings.shape[0], word_embeddings.shape[1], padding_idx=0)
+        self.char_emb = nn.Sequential(
+            nn.Embedding(num_char, char_emb_dim, padding_idx=0),
+            nn.Dropout(emb_dropout)
+            )
+        self.pos_emb = nn.Sequential(
+            nn.Embedding(num_pos, pos_emb_dim, padding_idx=0),
+            nn.Dropout(emb_dropout)
+            )
+        self.ner_emb = nn.Sequential(
+            nn.Embedding(num_ner, ner_emb_dim, padding_idx=0),
+            nn.Dropout(emb_dropout)
+            )
+        
+        self.word_embeddings = torch.nn.Embedding(word_embeddings.shape[0], word_embeddings.shape[1], 
+                                                    padding_idx=0)
         self.word_embeddings.weight.data.copy_(torch.from_numpy(word_embeddings))
+        self.word_embeddings = nn.Sequential(
+            self.word_embeddings,
+            nn.Dropout(emb_dropout)
+            )
         #self.answerPointerModel = answerPointerModel()
 
         self.char_lstm = nn.LSTM(char_emb_dim, char_emb_dim, num_layers=1, bidirectional=True)
-        self.aligningBlock = IterativeAligner( 2 * hidden_size, hidden_size, 1, 3)
+        self.aligningBlock = IterativeAligner( 2 * hidden_size, hidden_size, 1, 3, dropout=rnn_dropout)
         self.loss = nn.CrossEntropyLoss()
         self.DCRL_loss = DCRLLoss(5)
+
+        self.rnn_dropout = nn.Dropout(rnn_dropout)
 
         for i in range(num_layers):
             lstm = nn.LSTM(input_size, hidden_size, num_layers=1, bidirectional=True)
@@ -67,9 +85,12 @@ class MnemicReader(nn.Module):
         enc_que = []
         for i in range(self.num_layers):
             x1 = self.rnn[i](x1)[0]
+            x1 = self.rnn_dropout(x1)
             enc_con.append(x1)
+
             x2 = self.rnn[i](x2)[0]
             enc_que.append(x2)
+            x2 = self.rnn_dropout(x2)
 
         enc_con = torch.cat(enc_con, 2).transpose(0, 1) # (batch_size, seq_len, enc_con_dim)
         enc_que = torch.cat(enc_que, 2).transpose(0, 1) # (batch_size, seq_len, enc_que_dim)
