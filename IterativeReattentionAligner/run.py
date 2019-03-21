@@ -253,6 +253,8 @@ def main(args):
         train_loss = 0.0
         start_time = time.time()
         model.train()
+        if ITER >= 3:
+            model.use_RLLoss = True
         for batch in tqdm.tqdm(train_loader):
             global_step += 1
             #print (global_step)
