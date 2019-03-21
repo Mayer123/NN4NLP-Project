@@ -12,7 +12,8 @@ import logging
 from encoder import MnemicReader
 import cProfile, pstats, io
 #from bleu import compute_bleu
-from nltk.translate.bleu_score import sentence_bleu
+from nltk.translate.bleu_score import sentence_bleu, corpus_bleu
+import sacrebleu
 
 stoplist = set(['.',',', '...', '..'])
 
@@ -173,6 +174,8 @@ def compute_scores(rouge, start, end, context, a1, a2):
     rouge_score = 0.0
     bleu1 = 0.0
     bleu4 = 0.0
+    hyps = []
+    refs = []
     for i in range(0, len(start)):
         #print (context[i])
         #print (start[i], end[i])
@@ -185,10 +188,15 @@ def compute_scores(rouge, start, end, context, a1, a2):
             predicted_span = 'NO-ANSWER-FOUND'
         #print ("Sample output " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
         rouge_score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
+        hyps.append(predicted_span.split())
+        refs.append([a1[i].split(),a2[i].split()])
+
         bleu1 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(1, 0, 0, 0))
         bleu4 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(0.25, 0.25, 0.25, 0.25))
         #bleu1 += compute_bleu([[a1[i],a2[i]]], [predicted_span], max_order=1)[0]
         #bleu4 += compute_bleu([[a1[i],a2[i]]], [predicted_span])[0]
+    # bleu1 = corpus_bleu(refs, hyps, weights=(1.0,0,0,0))
+    # bleu4 = corpus_bleu(refs, hyps, weights=(0.25, 0.25, 0.25, 0.25))
     return (rouge_score, bleu1, bleu4)
 
 
