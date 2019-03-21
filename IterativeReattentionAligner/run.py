@@ -18,6 +18,11 @@ import sacrebleu
 stoplist = set(['.',',', '...', '..'])
 
 
+from CSMrouge import RRRouge
+from bleu import Bleu
+
+stoplist = set(['.',',', '...', '..'])
+bleu_obj = Bleu(4)
 
 class TextDataset(torch.utils.data.Dataset):
 
@@ -136,17 +141,19 @@ def convert_data(data, w2i, tag2i, ner2i, c2i, max_len=-1):
 def generate_embeddings(filename, word_dict):
     embeddings = np.random.uniform(-0.25, 0.25, (len(word_dict)+2, 100))
     count = 0
+    trained_idx = []
     with open(filename, "r", encoding="utf-8") as f:
         for i, line in enumerate(f):
             if i == 0:
                 continue
             tokens = line.split()
             if tokens[0] in word_dict:
+                trained_idx.append(word_dict[tokens[0]])
                 embeddings[word_dict[tokens[0]]] = np.array(list(map(float, tokens[1:])))
                 count += 1
     logger.info('Total vocab size %s pre-trained words %s' % (len(word_dict), count))
     np.save("../prepro/embeddings.npy", embeddings)
-    return embeddings
+    return embeddings, trained_idx
 
 def pad_sequence(sentences, pos, ner, char, em):
     max_len = max([len(sent) for sent in sentences])
@@ -170,12 +177,14 @@ def pad_sequence(sentences, pos, ner, char, em):
     #print([len(sent) for sent in sentences])
     return torch.as_tensor(sent_batch), torch.as_tensor(pos_batch), torch.as_tensor(ner_batch), torch.as_tensor(em_batch), torch.as_tensor(char_batch), torch.as_tensor(masks)
 
-def compute_scores(rouge, start, end, context, a1, a2):
+def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
     rouge_score = 0.0
     bleu1 = 0.0
     bleu4 = 0.0
     hyps = []
     refs = []
+    another_rouge = 0.0
+    preds = []
     for i in range(0, len(start)):
         #print (context[i])
         #print (start[i], end[i])
@@ -186,6 +195,9 @@ def compute_scores(rouge, start, end, context, a1, a2):
             predicted_span = ' '.join(context[i][start[i]:end[i]+1])
         if predicted_span in stoplist:
             predicted_span = 'NO-ANSWER-FOUND'
+        print ("Sample output " + str(start[i]) +" " + str(end[i]) + " " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
+        #score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
+        #return score
         #print ("Sample output " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
         rouge_score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
         hyps.append(predicted_span.split())
@@ -193,12 +205,17 @@ def compute_scores(rouge, start, end, context, a1, a2):
 
         bleu1 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(1, 0, 0, 0))
         bleu4 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(0.25, 0.25, 0.25, 0.25))
+        another_rouge += rrrouge.calc_score([predicted_span], [a1[i], a2[i]])
         #bleu1 += compute_bleu([[a1[i],a2[i]]], [predicted_span], max_order=1)[0]
-        #bleu4 += compute_bleu([[a1[i],a2[i]]], [predicted_span])[0]
+        #bleu4 += compute_bleu([[a1[i],a2[i]]], [predicted_span])[0]    
+        preds.append(predicted_span)
     # bleu1 = corpus_bleu(refs, hyps, weights=(1.0,0,0,0))
     # bleu4 = corpus_bleu(refs, hyps, weights=(0.25, 0.25, 0.25, 0.25))
-    return (rouge_score, bleu1, bleu4)
+    return (rouge_score, bleu1, bleu4, another_rouge, preds)
 
+def reset_embeddings(word_embeddings, fixed_embeddings, trained_idx):
+    word_embeddings.weight.data[trained_idx] = torch.FloatTensor(fixed_embeddings[trained_idx]).cuda()
+    return 
 
 def main(args):
     global logger
@@ -217,6 +234,7 @@ def main(args):
     with open(args.dev_file, 'r') as f:
         dev_data = json.load(f)
     rouge = Rouge()
+    rrrouge = RRRouge()
     logger.info('Converting to index')
     if args.dicts_dir is not None:
         dicts = []
@@ -234,7 +252,7 @@ def main(args):
     print (len(train))
     print (len(dev))
     logger.info('Generating embeddings')
-    embeddings = generate_embeddings(args.embedding_file, w2i)
+    embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
     train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=args.train_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
     dev_loader = torch.utils.data.DataLoader(dev, batch_size=args.dev_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
     #print (embeddings.shape)
@@ -288,12 +306,25 @@ def main(args):
                 q_mask = q_mask.cuda()
                 start = start.cuda()
                 end = end.cuda()
-            batch_loss = model(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, c)
+            #for name, param in model.named_parameters():
+            #    if param.requires_grad:
+            #        print(np.min(param.data), np.max(param.data))
+            #for n,p in  model.named_parameters():
+                #if n[:6] == 'weight':
+                #try:
+                #    mi = torch.min(p.grad)
+                #    ma = torch.max(p.grad)
+                #    print('===========\ngradient:{}\n----------\n{}\n----------\n{}'.format(n, mi, ma))
+                #except:
+                #    continue
+            #print(np.min(model.char_emb[0].weight.grad))
+            batch_loss = model(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, c, a1, a2)
             train_loss += batch_loss.cpu().item()
             optimizer.zero_grad()
             batch_loss.backward()
             #torch.nn.utils.clip_grad_norm_(model.parameters(),10)
             optimizer.step()
+            reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
             #if global_step % 100 == 0:
             #    logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
 
@@ -305,6 +336,10 @@ def main(args):
             rouge_scores = 0.0
             bleu1_scores = 0.0
             bleu4_scores = 0.0
+            another_rouge = 0.0
+            all_preds = []
+            all_a1 = []
+            all_a2 = []
             for batch in dev_loader:
                 c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2 = batch
                 c_vec, c_pos, c_ner, c_em, c_char, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
@@ -329,11 +364,14 @@ def main(args):
 
                 pred_start, pred_end = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask)
 
-
-                batch_score = compute_scores(rouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
+                batch_score = compute_scores(rouge, rrrouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
                 rouge_scores += batch_score[0]
                 bleu1_scores += batch_score[1]
                 bleu4_scores += batch_score[2]
+                another_rouge += batch_score[3]
+                all_preds.extend(batch_score[4])
+                all_a1.extend(a1)
+                all_a2.extend(a2)
                 dev_start_acc += torch.sum(torch.eq(pred_start.cpu(), start)).item()
                 dev_end_acc += torch.sum(torch.eq(pred_end.cpu(), end)).item()
             avg_rouge = rouge_scores / len(dev)
@@ -341,7 +379,18 @@ def main(args):
             dev_end_acc /= len(dev)
             avg_bleu1 = bleu1_scores / len(dev)
             avg_bleu4 = bleu4_scores / len(dev)
-            logger.info("iter %r: dev average rouge score %.4f, bleu1 score %.4f, bleu4 score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, avg_bleu1, avg_bleu4, dev_start_acc, dev_end_acc, time.time() - start_time))
+
+            #logger.info("iter %r: dev average rouge score %.4f, bleu1 score %.4f, bleu4 score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, avg_bleu1, avg_bleu4, dev_start_acc, dev_end_acc, time.time() - start_time))
+            #scheduler.step(avg_rouge)
+            #if avg_rouge > best:
+            #    best = avg_rouge
+            #    torch.save(model, 'best_model')
+            another_rouge_avg = another_rouge / len(dev)
+            word_target_dict = dict(enumerate(map(lambda item: [item[0], item[1]],zip(all_a1, all_a2))))
+            word_response_dict = dict(enumerate(map(lambda item: [item],all_preds)))
+            coco_bleu, coco_bleus = bleu_obj.compute_score(word_target_dict, word_response_dict)
+            coco_bleu1, _, _, coco_bleu4 = coco_bleu
+            logger.info("iter %r: dev average rouge score %.4f, another rouge %.4f, bleu1 score %.4f, bleu4 score %.4f, coco bleu1 %.4f, coco bleu4 %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, another_rouge_avg, avg_bleu1, avg_bleu4, coco_bleu1, coco_bleu4, dev_start_acc, dev_end_acc, time.time() - start_time))
             scheduler.step(avg_rouge)
             if avg_rouge > best:
                 best = avg_rouge

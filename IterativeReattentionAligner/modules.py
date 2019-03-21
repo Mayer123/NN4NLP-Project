@@ -63,13 +63,13 @@ class InteractiveAligner(nn.Module):
         #u_proj = u_proj * u_mask
 
         # E.shape = B x n x m
-        E = getAligmentMatrix(v_proj, u_proj, mask=v_mask, prev=prev)        
+        E = getAligmentMatrix(v_proj, u_proj, mask=v_mask, prev=prev)  #q_tilde 
 
         attended_v = torch.bmm(v.transpose(1,2), E).transpose(1,2)
         #attended_v = attended_v * u_mask
         # print E[4], v[4], attended_v[4]
         # print "batch_size=%d, m=%d, dim=%d" % (attended_v.shape[0], attended_v.shape[1], attended_v.shape[2])
-        fused_u = self.fusion(u, attended_v)        
+        fused_u = self.fusion(u, attended_v) # c_bar  
         # print u_lens[1], u[1], attended_v[1], fused_u[1]
         #print "batch_size=%d, n=%d, dim=%d" % (fused_u.shape[0], fused_u.shape[1], fused_u.shape[2])       
         return fused_u, u_lens, E
@@ -195,7 +195,7 @@ class AligningBlock(nn.Module):
         self.dropout = nn.Dropout(dropout)
     def forward(self, u, v, u_lens, v_lens, Et=None, Bt=None, prev_Zs=None):
         H, h_lens, E = self.interactive_aligner(u, v, u_lens, v_lens, prev=Et)
-        Z, z_lens, B = self.self_aligner(H, h_lens, prev=Bt)
+        Z, z_lens, B = self.self_aligner(H, h_lens, prev=Bt) #c_hat
         
         if prev_Zs is not None:
             for z in prev_Zs:            
@@ -207,7 +207,7 @@ class AligningBlock(nn.Module):
         # Z = Z[sorted_idxs]
         # packed_Z = rnn.pack_padded_sequence(Z, z_lens, batch_first=True)
         R, _ = self.evidence_collector(Z)
-        R = self.dropout(R)
+        R = self.dropout(R) # c_check
         # R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)    
 
         # R = R[rev_sorted_idxs]
@@ -278,4 +278,6 @@ if __name__ == '__main__':
     max_idxs = torch.argmax(p, dim=1)
     
     # print(p1[1], ts1[1], p1.shape) 
+    # print(p2[1], ts1[1], p2.shape)
+    # print(p2[1], ts1[1], p2.shape)
     # print(p2[1], ts1[1], p2.shape)

@@ -42,6 +42,8 @@ class MnemicReader(nn.Module):
 
         self.loss = nn.NLLLoss()
         self.DCRL_loss = DCRLLoss(5)
+        #self.weight_a = torch.pow(torch.randn(1, requires_grad=True), 2)
+        #self.weight_b = torch.pow(torch.randn(1, requires_grad=True), 2)
         self.weight_a = torch.randn(1, requires_grad=True)
         self.weight_b = torch.randn(1, requires_grad=True)
         self.half = torch.tensor(0.5)
@@ -54,7 +56,7 @@ class MnemicReader(nn.Module):
 
         self.use_RLLoss = False
 
-    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, context):
+    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, context, a1, a2):
         '''
             x.shape = (seq_len, batch, input_size) == (sentence_len, batch, emb_dim)
         '''
@@ -122,6 +124,13 @@ class MnemicReader(nn.Module):
         #print (end)
         #s_prob = torch.log(s_prob)
         #e_prob = torch.log(e_prob)
+        s_prob = torch.squeeze(s_prob)
+        e_prob = torch.squeeze(e_prob)
+        #s_prob = torch.log(s_prob)
+        #e_prob = torch.log(e_prob)
+        #loss1 = self.loss(s_prob, start)
+        #loss2 = self.loss(e_prob, end)
+        #loss = loss1 + loss2
 
         context_len = enc_con.shape[1]
         loss = self.loss(probs, start*context_len + end)
@@ -129,8 +138,8 @@ class MnemicReader(nn.Module):
             return loss
 
         #return loss
-        s_prob = torch.squeeze(s_prob)
-        e_prob = torch.squeeze(e_prob)
+        #s_prob = torch.exp(s_prob)
+        #e_prob = torch.exp(e_prob)
         # loss1 = self.loss(s_prob, start)
         # loss2 = self.loss(e_prob, end)
 
@@ -141,11 +150,13 @@ class MnemicReader(nn.Module):
         #e_prob = e_prob * c_mask.float()
 
         
-        rl_loss = self.DCRL_loss(s_prob, e_prob, start, end, context)
+        rl_loss = self.DCRL_loss(s_prob, e_prob, start, end, context, a1, a2)
         #_, s_index = torch.max(torch.squeeze(s_prob), dim=1)
         #_, e_index = torch.max(torch.squeeze(e_prob), dim=1)
         #print (loss1, loss2)
         #loss = (start - s_index)**2 + (end - e_index)**2
+        #loss = (loss1+loss2)*self.weight_a.pow(-1)*self.half+rl_loss*self.weight_b.pow(-1)*self.half+torch.log(self.weight_a)+torch.log(self.weight_b)
+        #return loss
         self.weight_a = self.weight_a.to(rl_loss.device)
         self.weight_b = self.weight_b.to(rl_loss.device)
         self.half = self.half.to(rl_loss.device)
@@ -275,4 +286,3 @@ if __name__ == '__main__':
     q_mask = torch.Tensor(np.random.randint(40, size=(batch, seq_len2))).long()
 
     mnemonicReader(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start=0, end=4)
-
