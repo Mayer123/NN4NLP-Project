@@ -151,3 +151,5 @@
 2019-03-20 20:12:39 - INFO - Total vocab size 35887 pre-trained words 31891
 2019-03-20 20:12:45 - INFO - Start training
 2019-03-20 20:12:45 - INFO - ----------------------------------------------------------------------------------------------------
+2019-03-20 20:27:45 - INFO - iter 0 global_step 1910 : train loss/batch=8.9837, time=900.79s
+2019-03-20 20:28:27 - INFO - iter 0: dev average rouge score 0.3739, start acc 0.2106, end acc 0.2843 time=942.17s
