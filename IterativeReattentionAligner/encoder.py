@@ -149,8 +149,8 @@ class MnemicReader(nn.Module):
         #s_prob = s_prob * c_mask.float()
         #e_prob = e_prob * c_mask.float()
 
-        
-        rl_loss = self.DCRL_loss(s_prob, e_prob, start, end, context, a1, a2)
+        probs = torch.exp(probs)
+        rl_loss = self.DCRL_loss(probs, context_len, start, end, context, a1, a2)
         #_, s_index = torch.max(torch.squeeze(s_prob), dim=1)
         #_, e_index = torch.max(torch.squeeze(e_prob), dim=1)
         #print (loss1, loss2)
