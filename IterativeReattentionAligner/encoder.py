@@ -12,7 +12,6 @@ class MnemicReader(nn.Module):
                     pos_emb_dim, ner_emb_dim, word_embeddings, num_char, 
                     num_pos, num_ner, emb_dropout, rnn_dropout):
         super(MnemicReader, self).__init__()
-
         self.num_layers = num_layers
         self.rnn = nn.ModuleList()            
 
@@ -237,7 +236,6 @@ class MnemicReader(nn.Module):
 
         #loss = (start - s_index)**2 + (end - e_index)**2
         return s_index, e_index
-
 
 if __name__ == '__main__':
     seq_len = 60

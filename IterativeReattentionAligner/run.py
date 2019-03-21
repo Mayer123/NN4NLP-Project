@@ -245,7 +245,6 @@ def main(args):
                             args.char_emb_size, args.pos_emb_size, args.ner_emb_size, 
                             embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, 
                             args.emb_dropout, args.rnn_dropout)
-
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
                                                             factor=0.5, patience=0,
@@ -258,7 +257,6 @@ def main(args):
     logger.info('-' * 100)
     global_step = 0
     best = 0.0
-    reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
 
     for ITER in range(args.epochs):
         train_loss = 0.0

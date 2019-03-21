@@ -1,4 +1,5 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 2019-03-19 15:00:17,172 - root - INFO - ----------------------------------------------------------------------------------------------------
 2019-03-19 15:00:17,172 - root - INFO - Loading data
 2019-03-19 15:00:17,679 - root - INFO - Converting to index
@@ -96,6 +97,8 @@
 2019-03-19 15:01:52,936 - root - INFO - iter 1 global_step 85 : batch loss=11.0753, time=8.62s
 2019-03-19 15:01:53,239 - root - INFO - iter 1 global_step 86 : batch loss=10.2762, time=8.93s
 =======
+=======
+>>>>>>> master
 2019-03-19 23:39:06,555 - root - INFO - ----------------------------------------------------------------------------------------------------
 2019-03-19 23:39:06,555 - root - INFO - Loading data
 2019-03-19 23:39:23,044 - root - INFO - Converting to index
@@ -110,4 +113,7 @@
 2019-03-19 23:45:26,517 - root - INFO - iter 0 global_step 400 : batch loss=9.2674, time=260.89s
 2019-03-19 23:46:27,705 - root - INFO - iter 0 global_step 500 : batch loss=7.8181, time=322.08s
 2019-03-19 23:47:28,895 - root - INFO - iter 0 global_step 600 : batch loss=9.0498, time=383.27s
+<<<<<<< HEAD
 >>>>>>> ahmed
+=======
+>>>>>>> master

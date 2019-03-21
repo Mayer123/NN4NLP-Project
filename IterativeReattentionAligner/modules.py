@@ -108,7 +108,7 @@ class SelfAligner(nn.Module):
         attended_x = torch.bmm(x.transpose(1,2), E).transpose(1,2)        
         #attended_x = attended_x * x_mask        
 
-        fused_x = self.fusion(x, attended_x)    # c_hat     
+        fused_x = self.fusion(x, attended_x)        
         return fused_x, x_lens, E
 
 class Summarizer(nn.Module):
@@ -278,4 +278,5 @@ if __name__ == '__main__':
     max_idxs = torch.argmax(p, dim=1)
     
     # print(p1[1], ts1[1], p1.shape) 
+    # print(p2[1], ts1[1], p2.shape)
     # print(p2[1], ts1[1], p2.shape)
