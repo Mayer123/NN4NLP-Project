@@ -13,7 +13,6 @@ from encoder import MnemicReader
 import cProfile, pstats, io
 
 stoplist = set(['.',',', '...', '..'])
-logger = logging.getLogger()
 
 class TextDataset(torch.utils.data.Dataset):
 
@@ -43,6 +42,7 @@ def add_arguments(parser):
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
     parser.add_argument('--pos_emb_size', type=int, default=20, help='Embedding size for pos tags')
     parser.add_argument('--ner_emb_size', type=int, default=20, help='Embedding size for ner')
+    parser.add_argument('--log_file', type=str, default="RMR.log", help='path to the log file')
 
 def build_dicts(data):    
     w2i = Counter()
@@ -113,17 +113,19 @@ def convert_data(data, w2i, tag2i, ner2i, c2i, max_len=-1):
 def generate_embeddings(filename, word_dict):
     embeddings = np.random.uniform(-0.25, 0.25, (len(word_dict)+2, 100))
     count = 0
+    trained_idx = []
     with open(filename, "r", encoding="utf-8") as f:
         for i, line in enumerate(f):
             if i == 0:
                 continue
             tokens = line.split()
             if tokens[0] in word_dict:
+                trained_idx.append(word_dict[tokens[0]])
                 embeddings[word_dict[tokens[0]]] = np.array(list(map(float, tokens[1:])))
                 count += 1
     logger.info('Total vocab size %s pre-trained words %s' % (len(word_dict), count))
     np.save("../prepro/embeddings.npy", embeddings)
-    return embeddings
+    return embeddings, trained_idx
 
 def pad_sequence(sentences, pos, ner, char, em):
     max_len = max([len(sent) for sent in sentences])
@@ -159,12 +161,24 @@ def compute_scores(rouge, start, end, context, a1, a2):
             predicted_span = ' '.join(context[i][start[i]:end[i]+1])
         if predicted_span in stoplist:
             predicted_span = 'NO-ANSWER-FOUND'
-        #print ("Sample output " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
+        print ("Sample output " + str(start[i]) +" " + str(end[i]) + " " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
         score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
     return score
 
+def reset_embeddings(word_embeddings, fixed_embeddings, trained_idx):
+    word_embeddings.weight.data[trained_idx] = torch.FloatTensor(fixed_embeddings[trained_idx]).cuda()
+    return 
 
 def main(args):
+    global logger
+    
+    logger = logging.getLogger()
+    fh = logging.FileHandler(args.log_file)
+    fh.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+
     logger.info('-' * 100)
     logger.info('Loading data')
     with open(args.train_file, 'r') as f:
@@ -187,16 +201,22 @@ def main(args):
     train = TextDataset(list(train))
     dev = TextDataset(list(dev))
     logger.info('Generating embeddings')
-    embeddings = generate_embeddings(args.embedding_file, w2i)
+    embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
     train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=args.train_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
     dev_loader = torch.utils.data.DataLoader(dev, batch_size=args.dev_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
     #print (embeddings.shape)
     use_cuda = torch.cuda.is_available()
     #use_cuda = False
     input_size = embeddings.shape[1] + args.char_emb_size * 2 + args.pos_emb_size + args.ner_emb_size + 1
-    model = MnemicReader(input_size, args.hidden_size, args.num_layers, args.char_emb_size, args.pos_emb_size, args.ner_emb_size, embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2)
-    optimizer = torch.optim.Adam(model.parameters())
+    model = MnemicReader(input_size, args.hidden_size, args.num_layers, 
+                            args.char_emb_size, args.pos_emb_size, args.ner_emb_size, 
+                            embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, 
+                            emb_dropout=0.3, rnn_dropout=0.3)
 
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
+                                                            factor=0.5, patience=0,
+                                                            verbose=True)
     if use_cuda:
         torch.cuda.manual_seed(args.seed)
         model.cuda()
@@ -205,6 +225,8 @@ def main(args):
     logger.info('-' * 100)
     global_step = 0
     best = 0.0
+    reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
+
     for ITER in range(args.epochs):
         train_loss = 0.0
         start_time = time.time()
@@ -236,11 +258,23 @@ def main(args):
                 end = end.cuda()
             batch_loss = model(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, c)
             train_loss += batch_loss.cpu().item()
+            #for name, param in model.named_parameters():
+            #    if param.requires_grad:
+            #        print(np.min(param.data), np.max(param.data))
+            #for n,p in  model.named_parameters():
+                #if n[:6] == 'weight':
+                #try:
+                #    mi = torch.min(p.grad)
+                #    ma = torch.max(p.grad)
+                #    print('===========\ngradient:{}\n----------\n{}\n----------\n{}'.format(n, mi, ma))
+                #except:
+                #    continue
+            #print(np.min(model.char_emb[0].weight.grad))
             optimizer.zero_grad()
             batch_loss.backward()
             #torch.nn.utils.clip_grad_norm_(model.parameters(),10)
             optimizer.step()
-            #logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
+            reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
 
         logger.info("iter %r global_step %s : train loss/batch=%.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), time.time() - start_time))
         model.eval()
@@ -272,6 +306,7 @@ def main(args):
 
                 pred_start, pred_end = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask)
 
+
                 batch_score = compute_scores(rouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
                 rouge_scores += batch_score
                 dev_start_acc += torch.sum(torch.eq(pred_start.cpu(), start)).item()
@@ -280,6 +315,7 @@ def main(args):
             dev_start_acc /= len(dev)
             dev_end_acc /= len(dev)
             logger.info("iter %r: dev average rouge score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, dev_start_acc, dev_end_acc, time.time() - start_time))
+            scheduler.step(avg_rouge)
             if avg_rouge > best:
                 best = avg_rouge
                 torch.save(model, 'best_model')
