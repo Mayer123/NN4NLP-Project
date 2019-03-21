@@ -172,3 +172,5 @@
 2019-03-21 14:59:51 - INFO - iter 4: dev average rouge score 0.4486, bleu1 score 0.4306, bleu4 score 0.0693, start acc 0.2618, end acc 0.3453 time=801.57s
 2019-03-21 15:12:56 - INFO - iter 5 global_step 6144 : train loss/batch=1.4775, time=785.57s
 2019-03-21 15:13:30 - INFO - iter 5: dev average rouge score 0.4447, bleu1 score 0.4211, bleu4 score 0.0618, start acc 0.2696, end acc 0.3464 time=819.44s
+2019-03-21 15:25:38 - INFO - iter 6 global_step 7168 : train loss/batch=1.4223, time=728.13s
+2019-03-21 15:26:06 - INFO - iter 6: dev average rouge score 0.4591, bleu1 score 0.4369, bleu4 score 0.0644, start acc 0.2759, end acc 0.3528 time=755.87s
