@@ -153,3 +153,18 @@
 2019-03-20 20:12:45 - INFO - ----------------------------------------------------------------------------------------------------
 2019-03-20 20:27:45 - INFO - iter 0 global_step 1910 : train loss/batch=8.9837, time=900.79s
 2019-03-20 20:28:27 - INFO - iter 0: dev average rouge score 0.3739, start acc 0.2106, end acc 0.2843 time=942.17s
+2019-03-21 13:51:09 - INFO - ----------------------------------------------------------------------------------------------------
+2019-03-21 13:51:09 - INFO - Loading data
+2019-03-21 13:51:23 - INFO - Converting to index
+2019-03-21 13:53:01 - INFO - Generating embeddings
+2019-03-21 13:53:04 - INFO - Total vocab size 35887 pre-trained words 31891
+2019-03-21 13:53:10 - INFO - Start training
+2019-03-21 13:53:10 - INFO - ----------------------------------------------------------------------------------------------------
+2019-03-21 14:05:55 - INFO - iter 0 global_step 1024 : train loss/batch=9.2855, time=765.00s
+2019-03-21 14:06:30 - INFO - iter 0: dev average rouge score 0.3621, bleu1 score 0.3460, bleu4 score 0.0445, start acc 0.2158, end acc 0.2777 time=800.29s
+2019-03-21 14:19:09 - INFO - iter 1 global_step 2048 : train loss/batch=7.5956, time=758.87s
+2019-03-21 14:19:37 - INFO - iter 1: dev average rouge score 0.3995, bleu1 score 0.3820, bleu4 score 0.0560, start acc 0.2317, end acc 0.3031 time=786.65s
+2019-03-21 14:32:25 - INFO - iter 2 global_step 3072 : train loss/batch=7.1381, time=767.78s
+2019-03-21 14:32:53 - INFO - iter 2: dev average rouge score 0.3966, bleu1 score 0.3803, bleu4 score 0.0537, start acc 0.2467, end acc 0.3187 time=795.28s
+2019-03-21 14:46:01 - INFO - iter 3 global_step 4096 : train loss/batch=1.5923, time=788.75s
+2019-03-21 14:46:29 - INFO - iter 3: dev average rouge score 0.4549, bleu1 score 0.4372, bleu4 score 0.0677, start acc 0.2673, end acc 0.3456 time=816.50s
