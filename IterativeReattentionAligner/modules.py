@@ -56,17 +56,17 @@ class InteractiveAligner(nn.Module):
         v_proj = F.relu(self.W_v(v))
         v_mask = output_mask(v_lens).unsqueeze(2)
         
-        v_proj = v_proj * v_mask
+        #v_proj = v_proj * v_mask
 
         u_proj = F.relu(self.W_u(u))
-        u_mask = output_mask(u_lens).unsqueeze(2)
-        u_proj = u_proj * u_mask
+        #u_mask = output_mask(u_lens).unsqueeze(2)
+        #u_proj = u_proj * u_mask
 
         # E.shape = B x n x m
         E = getAligmentMatrix(v_proj, u_proj, mask=v_mask, prev=prev)  #q_tilde 
 
         attended_v = torch.bmm(v.transpose(1,2), E).transpose(1,2)
-        attended_v = attended_v * u_mask
+        #attended_v = attended_v * u_mask
         # print E[4], v[4], attended_v[4]
         # print "batch_size=%d, m=%d, dim=%d" % (attended_v.shape[0], attended_v.shape[1], attended_v.shape[2])
         fused_u = self.fusion(u, attended_v) # c_bar  
@@ -94,17 +94,19 @@ class SelfAligner(nn.Module):
     def __init__(self, enc_dim):
         super(SelfAligner, self).__init__()
         self.fusion = Fusion(enc_dim)
+        self.W_u = nn.Linear(enc_dim, enc_dim, bias=False) # enc_dim x n
 
     def forward(self, x, x_lens, prev=None):
         x_mask = output_mask(x_lens).unsqueeze(2)
-        x = x * x_mask
+        #x = x * x_mask
+        x_proj = F.relu(self.W_u(x))
         
         I = torch.eye(x_mask.shape[1], device=x_mask.device).unsqueeze(0)        
         x_mask_ = torch.abs(I-1) * x_mask
 
-        E = getAligmentMatrix(x, x, x_mask_, prev=prev)                      
+        E = getAligmentMatrix(x_proj, x_proj, x_mask_, prev=prev)                      
         attended_x = torch.bmm(x.transpose(1,2), E).transpose(1,2)        
-        attended_x = attended_x * x_mask      #c_tilde  
+        #attended_x = attended_x * x_mask        
 
         fused_x = self.fusion(x, attended_x)    # c_hat     
         return fused_x, x_lens, E
@@ -170,11 +172,13 @@ class AnswerPointer(nn.Module):
         p = torch.bmm(p1, p2.transpose(1,2))
 
         eps = 1e-8
-        p = (1-eps)*p + eps*torch.min(p[p != 0])
-        p = torch.log(p)
+        for i in range(p.shape[0]):
+            p[i] = torch.triu(p[i])
+        p = (1-eps)*p + eps*torch.min(p[p != 0])        
+        p = torch.log(p)        
         p = p.view(p.shape[0], -1)
 
-        return p
+        return p1, p2, p
 
         
 class AligningBlock(nn.Module):
@@ -246,10 +250,10 @@ class IterativeAligner(nn.Module):
                                                          r_lens, v_lens, Et=Et,
                                                          Bt=Bt, prev_Zs=Zs)
         
-        p = self.answer_pointer(v, v_lens, R, r_lens)        
+        p1, p2, p = self.answer_pointer(v, v_lens, R, r_lens)        
         # print "p1.shape", p1.shape
         # print 'p2.shape', p2.shape
-        return p
+        return p1, p2, p
         
 
 if __name__ == '__main__':
@@ -269,8 +273,8 @@ if __name__ == '__main__':
     print(padded_ts2.shape, ts2_mask.shape)
     
     alignB = IterativeAligner(2, 1, 1, 1)
-    p = alignB(ts1, ts2, ts1_mask, ts2_mask)        
-    print(p[1], ts1[1], p.shape)    
+    p1,p2,p = alignB(ts1, ts2, ts1_mask, ts2_mask)        
+    print(p1[1], p2[1], p[1], ts1[1], p.shape)    
     max_idxs = torch.argmax(p, dim=1)
     
     # print(p1[1], ts1[1], p1.shape) 

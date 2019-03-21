@@ -11,8 +11,12 @@ import argparse
 import logging
 from encoder import MnemicReader
 import cProfile, pstats, io
+#from bleu import compute_bleu
+from nltk.translate.bleu_score import sentence_bleu
 
 stoplist = set(['.',',', '...', '..'])
+
+
 
 class TextDataset(torch.utils.data.Dataset):
 
@@ -35,13 +39,15 @@ def add_arguments(parser):
     parser.add_argument('--dicts_dir', type=str, default=None, help='Directory containing the word dictionaries')
     parser.add_argument('--seed', type=int, default=6, help='Random seed for the experiment')
     parser.add_argument('--epochs', type=int, default=5, help='Train data iterations')
-    parser.add_argument('--train_batch_size', type=int, default=16, help='Batch size for training')
-    parser.add_argument('--dev_batch_size', type=int, default=16, help='Batch size for dev')
+    parser.add_argument('--train_batch_size', type=int, default=32, help='Batch size for training')
+    parser.add_argument('--dev_batch_size', type=int, default=32, help='Batch size for dev')
     parser.add_argument('--hidden_size', type=int, default=100, help='Hidden size for LSTM')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of layers for LSTM')
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
-    parser.add_argument('--pos_emb_size', type=int, default=20, help='Embedding size for pos tags')
-    parser.add_argument('--ner_emb_size', type=int, default=20, help='Embedding size for ner')
+    parser.add_argument('--pos_emb_size', type=int, default=50, help='Embedding size for pos tags')
+    parser.add_argument('--ner_emb_size', type=int, default=50, help='Embedding size for ner')
+    parser.add_argument('--emb_dropout', type=float, default=0.3, help='Dropout rate for embedding layers')
+    parser.add_argument('--rnn_dropout', type=float, default=0.3, help='Dropout rate for RNN layers')
     parser.add_argument('--log_file', type=str, default="RMR.log", help='path to the log file')
 
 def build_dicts(data):    
@@ -95,19 +101,35 @@ def convert_data(data, w2i, tag2i, ner2i, c2i, max_len=-1):
         question_ner_vec = [ner2i[e] if e in ner2i else 1 for e in sample['question_ner']]
         question_character = [[c2i[c] if c in c2i else 1 for c in w] for w in sample['question_tokens']]
         context_em = sample['context_em_feature']
-        if max_len != -1 and len(context_vector) > max_len:
-            if sample['start_index'] >= max_len or sample['end_index'] >= max_len:
-                continue
-            context_vector = context_vector[:max_len]
-            context_pos_vec = context_pos_vec[:max_len]
-            context_ner_vec = context_ner_vec[:max_len]
-            context_character = context_character[:max_len]
-            context_em = context_em[:max_len]
+        context_tokens = sample['context_tokens']
         answer1 = sample['answers'][0].lower()
         answer2 = sample['answers'][1].lower()
+        ans_start = sample['start_index']
+        ans_end = sample['end_index']
+        if max_len != -1 and len(context_vector) > max_len:
+            if sample['start_index'] >= max_len or sample['end_index'] >= max_len: 
+                new_start = len(context_vector) - max_len
+                if new_start > sample['start_index']:
+                    print('This context is too long')
+                    print (current_len)
+                context_vector = context_vector[new_start:new_start+max_len]
+                context_pos_vec = context_pos_vec[new_start:new_start+max_len]
+                context_ner_vec = context_ner_vec[new_start:new_start+max_len]
+                context_character = context_character[new_start:new_start+max_len]
+                context_em = context_em[new_start:new_start+max_len]
+                context_tokens = context_tokens[new_start:new_start+max_len]
+                ans_start = ans_start - new_start
+                ans_end = ans_end - new_start
+            else:
+                context_vector = context_vector[:max_len]
+                context_pos_vec = context_pos_vec[:max_len]
+                context_ner_vec = context_ner_vec[:max_len]
+                context_character = context_character[:max_len]
+                context_em = context_em[:max_len]
+                context_tokens = context_tokens[:max_len]
         yield (context_vector, context_pos_vec, context_ner_vec, context_character, context_em, \
-            question_vector, question_pos_vec, question_ner_vec, question_character, sample['question_em_feature'], sample['start_index'], sample['end_index'], \
-            sample['context_tokens'], sample['question_tokens'], sample['chosen_answer'], answer1, answer2)
+            question_vector, question_pos_vec, question_ner_vec, question_character, sample['question_em_feature'], ans_start, ans_end, \
+            context_tokens, sample['question_tokens'], sample['chosen_answer'], answer1, answer2)
 
 
 def generate_embeddings(filename, word_dict):
@@ -150,7 +172,9 @@ def pad_sequence(sentences, pos, ner, char, em):
     return torch.as_tensor(sent_batch), torch.as_tensor(pos_batch), torch.as_tensor(ner_batch), torch.as_tensor(em_batch), torch.as_tensor(char_batch), torch.as_tensor(masks)
 
 def compute_scores(rouge, start, end, context, a1, a2):
-    score = 0.0
+    rouge_score = 0.0
+    bleu1 = 0.0
+    bleu4 = 0.0
     for i in range(0, len(start)):
         #print (context[i])
         #print (start[i], end[i])
@@ -161,9 +185,16 @@ def compute_scores(rouge, start, end, context, a1, a2):
             predicted_span = ' '.join(context[i][start[i]:end[i]+1])
         if predicted_span in stoplist:
             predicted_span = 'NO-ANSWER-FOUND'
-        print ("Sample output " + str(start[i]) +" " + str(end[i]) + " " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
-        score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
-    return score
+        #print ("Sample output " + str(start[i]) +" " + str(end[i]) + " " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
+        #score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
+    #return score
+        #print ("Sample output " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
+        rouge_score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
+        bleu1 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(1, 0, 0, 0))
+        bleu4 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(0.25, 0.25, 0.25, 0.25))
+        #bleu1 += compute_bleu([[a1[i],a2[i]]], [predicted_span], max_order=1)[0]
+        #bleu4 += compute_bleu([[a1[i],a2[i]]], [predicted_span])[0]
+    return (rouge_score, bleu1, bleu4)
 
 def reset_embeddings(word_embeddings, fixed_embeddings, trained_idx):
     word_embeddings.weight.data[trained_idx] = torch.FloatTensor(fixed_embeddings[trained_idx]).cuda()
@@ -200,6 +231,8 @@ def main(args):
     print (len(w2i), len(tag2i), len(ner2i), len(c2i))
     train = TextDataset(list(train))
     dev = TextDataset(list(dev))
+    print (len(train))
+    print (len(dev))
     logger.info('Generating embeddings')
     embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
     train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=args.train_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
@@ -211,7 +244,7 @@ def main(args):
     model = MnemicReader(input_size, args.hidden_size, args.num_layers, 
                             args.char_emb_size, args.pos_emb_size, args.ner_emb_size, 
                             embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, 
-                            emb_dropout=0.3, rnn_dropout=0.3)
+                            args.emb_dropout, args.rnn_dropout)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
@@ -231,6 +264,8 @@ def main(args):
         train_loss = 0.0
         start_time = time.time()
         model.train()
+        if ITER >= 3:
+            model.use_RLLoss = True
         for batch in tqdm.tqdm(train_loader):
             global_step += 1
             #print (global_step)
@@ -275,6 +310,8 @@ def main(args):
             #torch.nn.utils.clip_grad_norm_(model.parameters(),10)
             optimizer.step()
             reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
+            #if global_step % 100 == 0:
+            #    logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
 
         logger.info("iter %r global_step %s : train loss/batch=%.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), time.time() - start_time))
         model.eval()
@@ -282,6 +319,8 @@ def main(args):
             dev_start_acc = 0.0
             dev_end_acc = 0.0
             rouge_scores = 0.0
+            bleu1_scores = 0.0
+            bleu4_scores = 0.0
             for batch in dev_loader:
                 c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2 = batch
                 c_vec, c_pos, c_ner, c_em, c_char, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
@@ -308,13 +347,17 @@ def main(args):
 
 
                 batch_score = compute_scores(rouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
-                rouge_scores += batch_score
+                rouge_scores += batch_score[0]
+                bleu1_scores += batch_score[1]
+                bleu4_scores += batch_score[2]
                 dev_start_acc += torch.sum(torch.eq(pred_start.cpu(), start)).item()
                 dev_end_acc += torch.sum(torch.eq(pred_end.cpu(), end)).item()
             avg_rouge = rouge_scores / len(dev)
             dev_start_acc /= len(dev)
             dev_end_acc /= len(dev)
-            logger.info("iter %r: dev average rouge score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, dev_start_acc, dev_end_acc, time.time() - start_time))
+            avg_bleu1 = bleu1_scores / len(dev)
+            avg_bleu4 = bleu4_scores / len(dev)
+            logger.info("iter %r: dev average rouge score %.4f, bleu1 score %.4f, bleu4 score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, avg_bleu1, avg_bleu4, dev_start_acc, dev_end_acc, time.time() - start_time))
             scheduler.step(avg_rouge)
             if avg_rouge > best:
                 best = avg_rouge

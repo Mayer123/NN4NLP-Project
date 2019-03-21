@@ -10,7 +10,7 @@ class MnemicReader(nn.Module):
     ## model(c_vec, c_pos, c_ner, c_em, c_mask, q_vec, q_pos, q_ner, q_em, q_mask, start, end)
     def __init__(self, input_size, hidden_size, num_layers, char_emb_dim, 
                     pos_emb_dim, ner_emb_dim, word_embeddings, num_char, 
-                    num_pos, num_ner, emb_dropout=0, rnn_dropout=0):
+                    num_pos, num_ner, emb_dropout, rnn_dropout):
         super(MnemicReader, self).__init__()
 
         self.num_layers = num_layers
@@ -43,8 +43,10 @@ class MnemicReader(nn.Module):
 
         self.loss = nn.NLLLoss()
         self.DCRL_loss = DCRLLoss(5)
-        self.weight_a = torch.pow(torch.randn(1, requires_grad=True), 2)
-        self.weight_b = torch.pow(torch.randn(1, requires_grad=True), 2)
+        #self.weight_a = torch.pow(torch.randn(1, requires_grad=True), 2)
+        #self.weight_b = torch.pow(torch.randn(1, requires_grad=True), 2)
+        self.weight_a = torch.randn(1, requires_grad=True)
+        self.weight_b = torch.randn(1, requires_grad=True)
         self.half = torch.tensor(0.5)
 
         self.rnn_dropout = nn.Dropout(rnn_dropout)
@@ -52,6 +54,8 @@ class MnemicReader(nn.Module):
         for i in range(num_layers):
             lstm = nn.LSTM(input_size, hidden_size, num_layers=1, bidirectional=True)
             self.rnn.append(lstm)
+
+        self.use_RLLoss = False
 
     def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, context):
         '''
@@ -112,7 +116,7 @@ class MnemicReader(nn.Module):
         #print (torch.sum(q_em, dim=1))
 
         #print (c_mask.device, q_mask.device)
-        probs = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
+        s_prob, e_prob, probs = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
         #print (s_prob.shape, e_prob.shape)
         #print (start, end)
         #print (torch.gather(s_prob.squeeze(), 1, start.unsqueeze(1)))
@@ -124,25 +128,38 @@ class MnemicReader(nn.Module):
 
         context_len = enc_con.shape[1]
         loss = self.loss(probs, start*context_len + end)
-        return loss
+        if not self.use_RLLoss:
+            return loss
+
+        #return loss
+        s_prob = torch.squeeze(s_prob)
+        e_prob = torch.squeeze(e_prob)
         # loss1 = self.loss(s_prob, start)
         # loss2 = self.loss(e_prob, end)
+
+        #s_prob = torch.nn.functional.softmax(s_prob, dim=1)
+        #e_prob = torch.nn.functional.softmax(e_prob, dim=1)
         
-        s_prob = torch.nn.functional.softmax(s_prob, dim=1)
-        e_prob = torch.nn.functional.softmax(e_prob, dim=1)
+        #s_prob = s_prob * c_mask.float()
+        #e_prob = e_prob * c_mask.float()
+
         
-        s_prob = s_prob * c_mask.float()
-        e_prob = e_prob * c_mask.float()
         rl_loss = self.DCRL_loss(s_prob, e_prob, start, end, context)
         #_, s_index = torch.max(torch.squeeze(s_prob), dim=1)
         #_, e_index = torch.max(torch.squeeze(e_prob), dim=1)
         #print (loss1, loss2)
         #loss = (start - s_index)**2 + (end - e_index)**2
-        print (self.weight_a)
-        print (self.weight_b)
-        print (self.half)
-        loss = (loss1+loss2)*self.weight_a.pow(-1)*self.half+rl_loss*self.weight_b.pow(-1)*self.half+torch.log(self.weight_a)+torch.log(self.weight_b)
-        return loss
+        #loss = (loss1+loss2)*self.weight_a.pow(-1)*self.half+rl_loss*self.weight_b.pow(-1)*self.half+torch.log(self.weight_a)+torch.log(self.weight_b)
+        #return loss
+        self.weight_a = self.weight_a.to(rl_loss.device)
+        self.weight_b = self.weight_b.to(rl_loss.device)
+        self.half = self.half.to(rl_loss.device)
+        a1 = torch.pow(self.weight_a, -2) * self.half
+        a2 = torch.pow(self.weight_b, -2) * self.half
+        b1 = torch.log(torch.pow(self.weight_a, 2))
+        b2 = torch.log(torch.pow(self.weight_b, 2))
+        #total_loss = (loss1+loss2)*self.weight_a+rl_loss*self.weight_b
+        return loss * a1 + rl_loss * a2 + b1 + b2
 
     def evaluate(self, c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask):
         '''
@@ -199,7 +216,7 @@ class MnemicReader(nn.Module):
         #print (torch.sum(c_em, dim=1))
         #print (torch.sum(q_em, dim=1))
         #print (c_mask.device, q_mask.device)
-        pointer_probs = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
+        _, _, pointer_probs = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
 
         context_len = enc_con.shape[1]
         max_idx = torch.argmax(pointer_probs, dim=1)
