@@ -52,6 +52,8 @@ class MnemicReader(nn.Module):
             lstm = nn.LSTM(input_size, hidden_size, num_layers=1, bidirectional=True)
             self.rnn.append(lstm)
 
+        self.use_RLLoss = False
+
     def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, context):
         '''
             x.shape = (seq_len, batch, input_size) == (sentence_len, batch, emb_dim)
@@ -123,7 +125,8 @@ class MnemicReader(nn.Module):
 
         context_len = enc_con.shape[1]
         loss = self.loss(probs, start*context_len + end)
-        return loss
+        if not self.use_RLLoss:
+            return loss
 
         #return loss
         s_prob = torch.squeeze(s_prob)
