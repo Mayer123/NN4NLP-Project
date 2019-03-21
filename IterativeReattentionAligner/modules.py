@@ -56,17 +56,17 @@ class InteractiveAligner(nn.Module):
         v_proj = F.relu(self.W_v(v))
         v_mask = output_mask(v_lens).unsqueeze(2)
         
-        v_proj = v_proj * v_mask
+        #v_proj = v_proj * v_mask
 
         u_proj = F.relu(self.W_u(u))
-        u_mask = output_mask(u_lens).unsqueeze(2)
-        u_proj = u_proj * u_mask
+        #u_mask = output_mask(u_lens).unsqueeze(2)
+        #u_proj = u_proj * u_mask
 
         # E.shape = B x n x m
         E = getAligmentMatrix(v_proj, u_proj, mask=v_mask, prev=prev)        
 
         attended_v = torch.bmm(v.transpose(1,2), E).transpose(1,2)
-        attended_v = attended_v * u_mask
+        #attended_v = attended_v * u_mask
         # print E[4], v[4], attended_v[4]
         # print "batch_size=%d, m=%d, dim=%d" % (attended_v.shape[0], attended_v.shape[1], attended_v.shape[2])
         fused_u = self.fusion(u, attended_v)        
@@ -94,17 +94,19 @@ class SelfAligner(nn.Module):
     def __init__(self, enc_dim):
         super(SelfAligner, self).__init__()
         self.fusion = Fusion(enc_dim)
+        self.W_u = nn.Linear(enc_dim, enc_dim, bias=False) # enc_dim x n
 
     def forward(self, x, x_lens, prev=None):
         x_mask = output_mask(x_lens).unsqueeze(2)
-        x = x * x_mask
+        #x = x * x_mask
+        x_proj = F.relu(self.W_u(x))
         
         I = torch.eye(x_mask.shape[1], device=x_mask.device).unsqueeze(0)        
         x_mask_ = torch.abs(I-1) * x_mask
 
-        E = getAligmentMatrix(x, x, x_mask_, prev=prev)                      
+        E = getAligmentMatrix(x_proj, x_proj, x_mask_, prev=prev)                      
         attended_x = torch.bmm(x.transpose(1,2), E).transpose(1,2)        
-        attended_x = attended_x * x_mask        
+        #attended_x = attended_x * x_mask        
 
         fused_x = self.fusion(x, attended_x)        
         return fused_x, x_lens, E
