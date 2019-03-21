@@ -13,10 +13,11 @@ from encoder import MnemicReader
 import cProfile, pstats, io
 #from bleu import compute_bleu
 from nltk.translate.bleu_score import sentence_bleu
+from CSMrouge import RRRouge
+from bleu import Bleu
 
 stoplist = set(['.',',', '...', '..'])
-
-
+bleu_obj = Bleu(4)
 
 class TextDataset(torch.utils.data.Dataset):
 
@@ -169,10 +170,12 @@ def pad_sequence(sentences, pos, ner, char, em):
     #print([len(sent) for sent in sentences])
     return torch.as_tensor(sent_batch), torch.as_tensor(pos_batch), torch.as_tensor(ner_batch), torch.as_tensor(em_batch), torch.as_tensor(char_batch), torch.as_tensor(masks)
 
-def compute_scores(rouge, start, end, context, a1, a2):
+def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
     rouge_score = 0.0
     bleu1 = 0.0
     bleu4 = 0.0
+    another_rouge = 0.0
+    preds = []
     for i in range(0, len(start)):
         #print (context[i])
         #print (start[i], end[i])
@@ -187,9 +190,11 @@ def compute_scores(rouge, start, end, context, a1, a2):
         rouge_score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
         bleu1 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(1, 0, 0, 0))
         bleu4 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(0.25, 0.25, 0.25, 0.25))
+        another_rouge += rrrouge.calc_score([predicted_span], [a1[i], a2[i]])
         #bleu1 += compute_bleu([[a1[i],a2[i]]], [predicted_span], max_order=1)[0]
         #bleu4 += compute_bleu([[a1[i],a2[i]]], [predicted_span])[0]
-    return (rouge_score, bleu1, bleu4)
+        preds.append(predicted_span)
+    return (rouge_score, bleu1, bleu4, another_rouge, preds)
 
 
 def main(args):
@@ -209,6 +214,7 @@ def main(args):
     with open(args.dev_file, 'r') as f:
         dev_data = json.load(f)
     rouge = Rouge()
+    rrrouge = RRRouge()
     logger.info('Converting to index')
     if args.dicts_dir is not None:
         dicts = []
@@ -280,7 +286,7 @@ def main(args):
                 q_mask = q_mask.cuda()
                 start = start.cuda()
                 end = end.cuda()
-            batch_loss = model(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, c)
+            batch_loss = model(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, c, a1, a2)
             train_loss += batch_loss.cpu().item()
             optimizer.zero_grad()
             batch_loss.backward()
@@ -297,6 +303,10 @@ def main(args):
             rouge_scores = 0.0
             bleu1_scores = 0.0
             bleu4_scores = 0.0
+            another_rouge = 0.0
+            all_preds = []
+            all_a1 = []
+            all_a2 = []
             for batch in dev_loader:
                 c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2 = batch
                 c_vec, c_pos, c_ner, c_em, c_char, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
@@ -322,10 +332,14 @@ def main(args):
                 pred_start, pred_end = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask)
 
 
-                batch_score = compute_scores(rouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
+                batch_score = compute_scores(rouge, rrrouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
                 rouge_scores += batch_score[0]
                 bleu1_scores += batch_score[1]
                 bleu4_scores += batch_score[2]
+                another_rouge += batch_score[3]
+                all_preds.extend(batch_score[4])
+                all_a1.extend(a1)
+                all_a2.extend(a2)
                 dev_start_acc += torch.sum(torch.eq(pred_start.cpu(), start)).item()
                 dev_end_acc += torch.sum(torch.eq(pred_end.cpu(), end)).item()
             avg_rouge = rouge_scores / len(dev)
@@ -333,7 +347,12 @@ def main(args):
             dev_end_acc /= len(dev)
             avg_bleu1 = bleu1_scores / len(dev)
             avg_bleu4 = bleu4_scores / len(dev)
-            logger.info("iter %r: dev average rouge score %.4f, bleu1 score %.4f, bleu4 score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, avg_bleu1, avg_bleu4, dev_start_acc, dev_end_acc, time.time() - start_time))
+            another_rouge_avg = another_rouge / len(dev)
+            word_target_dict = dict(enumerate(map(lambda item: [item[0], item[1]],zip(all_a1, all_a2))))
+            word_response_dict = dict(enumerate(map(lambda item: [item],all_preds)))
+            coco_bleu, coco_bleus = bleu_obj.compute_score(word_target_dict, word_response_dict)
+            coco_bleu1, _, _, coco_bleu4 = coco_bleu
+            logger.info("iter %r: dev average rouge score %.4f, another rouge %.4f, bleu1 score %.4f, bleu4 score %.4f, coco bleu1 %.4f, coco bleu4 %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, avg_rouge, another_rouge_avg, avg_bleu1, avg_bleu4, coco_bleu1, coco_bleu4, dev_start_acc, dev_end_acc, time.time() - start_time))
             scheduler.step(avg_rouge)
             if avg_rouge > best:
                 best = avg_rouge

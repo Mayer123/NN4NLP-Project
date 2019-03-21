@@ -2,14 +2,16 @@ import torch
 from torch import nn
 from rouge import Rouge
 import numpy as np
+from CSMrouge import RRRouge
 stoplist = set(['.',',', '...', '..'])
 
-def get_reward(pred_start, pred_end, start, end, context):
-    rouge = Rouge()
+def get_reward(pred_start, pred_end, start, end, context, a1, a2):
+    #rouge = Rouge()
+    rrrouge = RRRouge()
     p1 = pred_start.tolist()
     p2 = pred_end.tolist()
-    l1 = start.tolist()
-    l2 = end.tolist()
+    #l1 = start.tolist()
+    #l2 = end.tolist()
     scores = np.zeros(len(p1))
     for i in range(0, len(p1)):
         if p1[i] > p2[i]:
@@ -18,8 +20,9 @@ def get_reward(pred_start, pred_end, start, end, context):
             pred_span = ' '.join(context[i][p1[i]:p2[i]+1])
         if pred_span in stoplist:
             pred_span = 'NO-ANSWER-FOUND'
-        gold_span = ' '.join(context[i][start[i]:end[i]+1])
-        scores[i] = rouge.get_scores(pred_span, gold_span)[0]['rouge-l']['f']
+        #gold_span = ' '.join(context[i][start[i]:end[i]+1])
+        #scores[i] = rouge.get_scores(pred_span, gold_span)[0]['rouge-l']['f']
+        scores[i] = rrrouge.calc_score([pred_span], [a1[i], a2[i]])
     return torch.as_tensor(scores, dtype=torch.float32)
 
 class DCRLLoss(nn.Module):
@@ -28,10 +31,10 @@ class DCRLLoss(nn.Module):
         self.k = k
         self.loss = nn.NLLLoss(reduction='none')
 
-    def forward(self, start_prob, end_prob, start, end, context):
+    def forward(self, start_prob, end_prob, start, end, context, a1, a2):
         _, greedy_start = torch.max(start_prob, dim=1)
         _, greedy_end = torch.max(end_prob, dim=1)
-        greedy_reward = get_reward(greedy_start, greedy_end, start, end, context)
+        greedy_reward = get_reward(greedy_start, greedy_end, start, end, context, a1, a2)
         greedy_reward = greedy_reward.to(start_prob.device)
         #print (greedy_reward)
         kbest_prob_start, kbest_start = torch.topk(start_prob, self.k, dim=1)
@@ -40,7 +43,7 @@ class DCRLLoss(nn.Module):
         indice_end = torch.multinomial(kbest_prob_end, 1)
         sample_start = torch.gather(kbest_start, 1, indice_start).squeeze()
         sample_end = torch.gather(kbest_end, 1, indice_end).squeeze()
-        sample_reward = get_reward(sample_start, sample_end, start, end, context)
+        sample_reward = get_reward(sample_start, sample_end, start, end, context, a1, a2)
         sample_reward = sample_reward.to(start_prob.device)
         #print (sample_reward)
         greedy_better = greedy_reward - sample_reward
