@@ -128,12 +128,12 @@ class MnemicReader(nn.Module):
         e_prob = torch.squeeze(e_prob)
         #s_prob = torch.log(s_prob)
         #e_prob = torch.log(e_prob)
-        #loss1 = self.loss(s_prob, start)
-        #loss2 = self.loss(e_prob, end)
-        #loss = loss1 + loss2
+        loss1 = self.loss(torch.log(s_prob), start)
+        loss2 = self.loss(torch.log(e_prob), end)
+        loss = loss1 + loss2
 
         context_len = enc_con.shape[1]
-        loss = self.loss(probs, start*context_len + end)
+        #loss = self.loss(probs, start*context_len + end)
         if not self.use_RLLoss:
             return loss
 
@@ -150,7 +150,7 @@ class MnemicReader(nn.Module):
         #e_prob = e_prob * c_mask.float()
 
         probs = torch.exp(probs)
-        rl_loss = self.DCRL_loss(probs, context_len, start, end, context, a1, a2)
+        rl_loss = self.DCRL_loss(probs, s_prob, e_prob, context_len, start, end, context, a1, a2)
         #_, s_index = torch.max(torch.squeeze(s_prob), dim=1)
         #_, e_index = torch.max(torch.squeeze(e_prob), dim=1)
         #print (loss1, loss2)

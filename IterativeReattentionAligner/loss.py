@@ -33,7 +33,7 @@ class DCRLLoss(nn.Module):
         self.k = k
         self.loss = nn.NLLLoss(reduction='none')
 
-    def forward(self, probs, context_len, start, end, context, a1, a2):
+    def forward(self, probs, start_prob, end_prob, context_len, start, end, context, a1, a2):
         #_, greedy_start = torch.max(start_prob, dim=1)
         #_, greedy_end = torch.max(end_prob, dim=1)
         max_idx = torch.argmax(probs, dim=1)
@@ -62,14 +62,14 @@ class DCRLLoss(nn.Module):
         sample_better = torch.clamp(sample_reward, 0., 1e7)
         #print (greedy_better)
         #print (sample_better)
-        #greedy_loss_start = self.loss(start_prob, greedy_start)
-        #greedy_loss_end = self.loss(end_prob, greedy_end)
-        #sample_loss_start = self.loss(start_prob, sample_start)
-        #sample_loss_end = self.loss(end_prob, sample_end)
-        #total_loss = greedy_better * (greedy_loss_start + greedy_loss_end) + sample_better * (sample_loss_start + sample_loss_end)
-        greedy_loss = self.loss(probs, greedy_start*context_len + greedy_end)
-        sample_loss = self.loss(probs, sample_start*context_len + sample_end)
-        total_loss = greedy_better * greedy_loss + sample_better * sample_loss
+        greedy_loss_start = self.loss(torch.log(start_prob), greedy_start)
+        greedy_loss_end = self.loss(torch.log(end_prob), greedy_end)
+        sample_loss_start = self.loss(torch.log(start_prob), sample_start)
+        sample_loss_end = self.loss(torch.log(end_prob), sample_end)
+        total_loss = greedy_better * (greedy_loss_start + greedy_loss_end) + sample_better * (sample_loss_start + sample_loss_end)
+        #greedy_loss = self.loss(probs, greedy_start*context_len + greedy_end)
+        #sample_loss = self.loss(probs, sample_start*context_len + sample_end)
+        #total_loss = greedy_better * greedy_loss + sample_better * sample_loss
         return torch.mean(total_loss)
 
 
