@@ -1,4 +1,8 @@
+*.out
+*.log
 *.pyc
+*.pt
+*.json
 best_model*
 nohup*
 *.log

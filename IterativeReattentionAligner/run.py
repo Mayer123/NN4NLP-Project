@@ -151,7 +151,6 @@ def generate_embeddings(filename, word_dict):
                 trained_idx.append(word_dict[tokens[0]])
                 embeddings[word_dict[tokens[0]]] = np.array(list(map(float, tokens[1:])))
                 count += 1
-    logger.info('Total vocab size %s pre-trained words %s' % (len(word_dict), count))
     np.save("../prepro/embeddings.npy", embeddings)
     return embeddings, trained_idx
 
