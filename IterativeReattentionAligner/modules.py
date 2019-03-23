@@ -178,6 +178,8 @@ class AnswerPointer(nn.Module):
         p = torch.log(p)        
         p = p.view(p.shape[0], -1)
 
+        p1 = (1-eps)*p1 + eps*torch.min(p1[p1 != 0])
+        p2 = (1-eps)*p2 + eps*torch.min(p2[p2 != 0])
         return p1, p2, p
 
         
@@ -195,7 +197,8 @@ class AligningBlock(nn.Module):
         self.dropout = nn.Dropout(dropout)
     def forward(self, u, v, u_lens, v_lens, Et=None, Bt=None, prev_Zs=None):
         H, h_lens, E = self.interactive_aligner(u, v, u_lens, v_lens, prev=Et)
-        Z, z_lens, B = self.self_aligner(H, h_lens, prev=Bt) #c_hat
+        Z, z_lens, B = self.self_aligner(H, h_lens, prev=Bt)
+ #c_hat
         
         if prev_Zs is not None:
             for z in prev_Zs:            
