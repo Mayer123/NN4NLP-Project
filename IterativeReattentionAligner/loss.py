@@ -41,6 +41,8 @@ class DCRLLoss(nn.Module):
         greedy_end = max_idx % context_len
         greedy_reward = get_reward(greedy_start, greedy_end, start, end, context, a1, a2)
         greedy_reward = greedy_reward.to(probs.device)
+        #for i in range(probs.shape[0]):
+        #    probs[i][max_idx[i]] = 0
         #print (greedy_reward)
         #kbest_prob_start, kbest_start = torch.topk(start_prob, self.k, dim=1)
         #kbest_prob_end, kbest_end = torch.topk(end_prob, self.k, dim=1)
