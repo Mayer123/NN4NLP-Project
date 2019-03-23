@@ -209,8 +209,7 @@ def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
         #bleu1 += compute_bleu([[a1[i],a2[i]]], [predicted_span], max_order=1)[0]
         #bleu4 += compute_bleu([[a1[i],a2[i]]], [predicted_span])[0]    
         preds.append(predicted_span)
-    # bleu1 = corpus_bleu(refs, hyps, weights=(1.0,0,0,0))
-    # bleu4 = corpus_bleu(refs, hyps, weights=(0.25, 0.25, 0.25, 0.25))
+    
     return (rouge_score, bleu1, bleu4, another_rouge, preds)
 
 def reset_embeddings(word_embeddings, fixed_embeddings, trained_idx):
