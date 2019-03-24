@@ -89,6 +89,7 @@ def main(args):
         all_a1 = []
         all_a2 = []
         all_ids = []
+        all_scores = []
         Eval_Rouge = []
         Eval_Loss = []
         nlloss = torch.nn.NLLLoss()
@@ -128,6 +129,7 @@ def main(args):
             all_a1.extend(a1)
             all_a2.extend(a2)
             all_ids.extend(_id)
+            all_scores.extend(batch_score[5])
             eval_start_acc += torch.sum(torch.eq(pred_start.cpu(), start)).item()
             eval_end_acc += torch.sum(torch.eq(pred_end.cpu(), end)).item()
             
@@ -144,7 +146,7 @@ def main(args):
         # word_response_dict = dict(enumerate(map(lambda item: [item],all_preds)))
         # coco_bleu, coco_bleus = bleu_obj.compute_score(word_target_dict, word_response_dict)
         # coco_bleu1, _, _, coco_bleu4 = coco_bleu
-        eval_output = [{'prediction': pred, 'answer1': a1, 'answer2':a2, '_id':_id} for pred, a1, a2, _id in zip(all_preds, all_a1, all_a2, all_ids)]
+        eval_output = [{'prediction': pred, 'answer1': a1, 'answer2':a2, 'rouge_score':s, '_id':_id} for pred, a1, a2, s, _id in zip(all_preds, all_a1, all_a2, all_scores, all_ids)]
         logger.info("eval loss %.4f eval average rouge score %.4f, another rouge %.4f, bleu1 score %.4f, bleu4 score %.4f, start acc %.4f, end acc %.4f" % (eval_loss/len(eval_loader), avg_rouge, another_rouge_avg, avg_bleu1, avg_bleu4, eval_start_acc, eval_end_acc))
         with open('Best_eval_output.json', 'w') as fout:
             json.dump(eval_output, fout)            

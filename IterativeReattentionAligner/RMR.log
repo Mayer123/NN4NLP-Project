@@ -542,3 +542,45 @@
 2019-03-22 23:14:35 - INFO - Converting to index
 2019-03-22 23:16:17 - INFO - Generating embeddings
 2019-03-22 23:16:20 - INFO - Total vocab size 35887 pre-trained words 31891
+2019-03-22 23:16:48 - INFO - Start training
+2019-03-22 23:16:48 - INFO - ----------------------------------------------------------------------------------------------------
+2019-03-22 23:28:54 - INFO - iter 0 global_step 1024 : train loss/batch=9.2415, train CE loss/batch 9.2415, train rouge score 0.2341, time=725.73s
+2019-03-22 23:30:29 - INFO - iter 0: dev loss 7.5799 dev average rouge score 0.3617, another rouge 0.3693, bleu1 score 0.3474, bleu4 score 0.0469, start acc 0.2155, end acc 0.2814 time=820.34s
+2019-03-22 23:42:09 - INFO - iter 1 global_step 2048 : train loss/batch=7.5693, train CE loss/batch 7.5693, train rouge score 0.3709, time=700.01s
+2019-03-22 23:42:45 - INFO - iter 1: dev loss 7.2414 dev average rouge score 0.4017, another rouge 0.4047, bleu1 score 0.3845, bleu4 score 0.0558, start acc 0.2300, end acc 0.3066 time=735.81s
+2019-03-22 23:53:53 - INFO - iter 2 global_step 3072 : train loss/batch=7.1148, train CE loss/batch 7.1148, train rouge score 0.4065, time=668.03s
+2019-03-22 23:54:24 - INFO - iter 2: dev loss 7.1017 dev average rouge score 0.4002, another rouge 0.4050, bleu1 score 0.3834, bleu4 score 0.0572, start acc 0.2467, end acc 0.3196 time=698.44s
+2019-03-23 00:05:58 - INFO - iter 3 global_step 4096 : train loss/batch=2.6231, train CE loss/batch 7.1942, train rouge score 0.4707, time=693.92s
+2019-03-23 00:06:26 - INFO - iter 3: dev loss 7.4701 dev average rouge score 0.4767, another rouge 0.4803, bleu1 score 0.4578, bleu4 score 0.0693, start acc 0.2621, end acc 0.3409 time=722.45s
+2019-03-23 00:18:17 - INFO - iter 4 global_step 5120 : train loss/batch=2.5796, train CE loss/batch 7.1646, train rouge score 0.4822, time=710.02s
+2019-03-23 00:18:48 - INFO - iter 4: dev loss 7.2880 dev average rouge score 0.4835, another rouge 0.4878, bleu1 score 0.4650, bleu4 score 0.0699, start acc 0.2652, end acc 0.3476 time=741.71s
+2019-03-23 00:29:59 - INFO - iter 5 global_step 6144 : train loss/batch=2.5508, train CE loss/batch 7.1039, train rouge score 0.4957, time=669.94s
+2019-03-23 00:30:31 - INFO - iter 5: dev loss 7.3940 dev average rouge score 0.4818, another rouge 0.4817, bleu1 score 0.4569, bleu4 score 0.0642, start acc 0.2655, end acc 0.3476 time=702.08s
+2019-03-23 00:41:48 - INFO - iter 6 global_step 7168 : train loss/batch=2.4857, train CE loss/batch 6.9256, train rouge score 0.5154, time=677.69s
+2019-03-23 00:42:15 - INFO - iter 6: dev loss 7.2548 dev average rouge score 0.4958, another rouge 0.4960, bleu1 score 0.4725, bleu4 score 0.0720, start acc 0.2768, end acc 0.3557 time=704.41s
+2019-03-23 00:53:43 - INFO - iter 7 global_step 8192 : train loss/batch=2.4541, train CE loss/batch 6.8303, train rouge score 0.5266, time=687.12s
+2019-03-23 00:54:12 - INFO - iter 7: dev loss 7.4804 dev average rouge score 0.4917, another rouge 0.4908, bleu1 score 0.4687, bleu4 score 0.0686, start acc 0.2722, end acc 0.3522 time=716.58s
+2019-03-23 01:06:19 - INFO - iter 8 global_step 9216 : train loss/batch=2.4218, train CE loss/batch 6.7086, train rouge score 0.5357, time=727.13s
+2019-03-23 01:06:51 - INFO - iter 8: dev loss 7.2610 dev average rouge score 0.5010, another rouge 0.5019, bleu1 score 0.4791, bleu4 score 0.0710, start acc 0.2748, end acc 0.3589 time=759.43s
+2019-03-23 01:17:56 - INFO - iter 9 global_step 10240 : train loss/batch=2.4092, train CE loss/batch 6.6667, train rouge score 0.5410, time=663.80s
+2019-03-23 01:18:42 - INFO - iter 9: dev loss 7.2959 dev average rouge score 0.5009, another rouge 0.5005, bleu1 score 0.4779, bleu4 score 0.0712, start acc 0.2785, end acc 0.3580 time=710.23s
+2019-03-23 01:30:05 - INFO - iter 10 global_step 11264 : train loss/batch=2.3865, train CE loss/batch 6.5822, train rouge score 0.5475, time=683.19s
+2019-03-23 01:30:35 - INFO - iter 10: dev loss 7.3205 dev average rouge score 0.5040, another rouge 0.5024, bleu1 score 0.4788, bleu4 score 0.0718, start acc 0.2806, end acc 0.3597 time=712.88s
+2019-03-23 01:42:02 - INFO - iter 11 global_step 12288 : train loss/batch=2.3706, train CE loss/batch 6.5423, train rouge score 0.5484, time=686.67s
+2019-03-23 01:42:39 - INFO - iter 11: dev loss 7.3155 dev average rouge score 0.5033, another rouge 0.5011, bleu1 score 0.4764, bleu4 score 0.0680, start acc 0.2855, end acc 0.3626 time=724.24s
+2019-03-23 01:54:41 - INFO - iter 12 global_step 13312 : train loss/batch=2.3650, train CE loss/batch 6.5102, train rouge score 0.5534, time=721.29s
+2019-03-23 01:55:11 - INFO - iter 12: dev loss 7.2600 dev average rouge score 0.5068, another rouge 0.5056, bleu1 score 0.4823, bleu4 score 0.0728, start acc 0.2826, end acc 0.3655 time=751.59s
+2019-03-23 02:06:26 - INFO - iter 13 global_step 14336 : train loss/batch=2.3583, train CE loss/batch 6.4970, train rouge score 0.5564, time=674.75s
+2019-03-23 02:07:04 - INFO - iter 13: dev loss 7.3352 dev average rouge score 0.4985, another rouge 0.4968, bleu1 score 0.4737, bleu4 score 0.0705, start acc 0.2820, end acc 0.3626 time=712.14s
+2019-03-23 02:18:46 - INFO - iter 14 global_step 15360 : train loss/batch=2.3449, train CE loss/batch 6.4693, train rouge score 0.5570, time=702.76s
+2019-03-23 02:19:27 - INFO - iter 14: dev loss 7.3218 dev average rouge score 0.5052, another rouge 0.5039, bleu1 score 0.4802, bleu4 score 0.0721, start acc 0.2840, end acc 0.3646 time=743.10s
+2019-03-23 02:30:32 - INFO - iter 15 global_step 16384 : train loss/batch=2.3456, train CE loss/batch 6.4509, train rouge score 0.5590, time=664.97s
+2019-03-23 02:31:01 - INFO - iter 15: dev loss 7.3471 dev average rouge score 0.5051, another rouge 0.5036, bleu1 score 0.4799, bleu4 score 0.0720, start acc 0.2826, end acc 0.3638 time=694.65s
+2019-03-23 02:42:10 - INFO - iter 16 global_step 17408 : train loss/batch=2.3477, train CE loss/batch 6.4569, train rouge score 0.5593, time=668.61s
+2019-03-23 02:42:36 - INFO - iter 16: dev loss 7.3195 dev average rouge score 0.5034, another rouge 0.5020, bleu1 score 0.4786, bleu4 score 0.0721, start acc 0.2826, end acc 0.3626 time=695.05s
+2019-03-23 02:53:49 - INFO - iter 17 global_step 18432 : train loss/batch=2.3464, train CE loss/batch 6.4492, train rouge score 0.5584, time=672.21s
+2019-03-23 02:54:27 - INFO - iter 17: dev loss 7.3151 dev average rouge score 0.5047, another rouge 0.5032, bleu1 score 0.4798, bleu4 score 0.0715, start acc 0.2837, end acc 0.3641 time=710.76s
+2019-03-23 03:05:25 - INFO - iter 18 global_step 19456 : train loss/batch=2.3432, train CE loss/batch 6.4456, train rouge score 0.5591, time=657.66s
+2019-03-23 03:05:55 - INFO - iter 18: dev loss 7.3196 dev average rouge score 0.5046, another rouge 0.5032, bleu1 score 0.4798, bleu4 score 0.0719, start acc 0.2832, end acc 0.3638 time=688.11s
+2019-03-23 03:17:06 - INFO - iter 19 global_step 20480 : train loss/batch=2.3464, train CE loss/batch 6.4515, train rouge score 0.5595, time=670.94s
+2019-03-23 03:17:38 - INFO - iter 19: dev loss 7.3208 dev average rouge score 0.5046, another rouge 0.5032, bleu1 score 0.4798, bleu4 score 0.0719, start acc 0.2829, end acc 0.3638 time=702.77s

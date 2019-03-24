@@ -12,8 +12,7 @@ import logging
 from encoder import MnemicReader
 import cProfile, pstats, io
 #from bleu import compute_bleu
-from nltk.translate.bleu_score import sentence_bleu, corpus_bleu
-import sacrebleu
+from nltk.translate.bleu_score import sentence_bleu
 
 stoplist = set(['.',',', '...', '..'])
 
@@ -151,6 +150,7 @@ def generate_embeddings(filename, word_dict):
                 trained_idx.append(word_dict[tokens[0]])
                 embeddings[word_dict[tokens[0]]] = np.array(list(map(float, tokens[1:])))
                 count += 1
+    #logger.info('Total vocab size %s pre-trained words %s' % (len(word_dict), count))
     np.save("../prepro/embeddings.npy", embeddings)
     return embeddings, trained_idx
 
@@ -180,10 +180,9 @@ def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
     rouge_score = 0.0
     bleu1 = 0.0
     bleu4 = 0.0
-    hyps = []
-    refs = []
     another_rouge = 0.0
     preds = []
+    sample_scores = []
     for i in range(0, len(start)):
         #print (context[i])
         #print (start[i], end[i])
@@ -199,17 +198,14 @@ def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
         #return score
         #print ("Sample output " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
         rouge_score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
-        hyps.append(predicted_span.split())
-        refs.append([a1[i].split(),a2[i].split()])
-
         bleu1 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(1, 0, 0, 0))
         bleu4 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(0.25, 0.25, 0.25, 0.25))
         another_rouge += rrrouge.calc_score([predicted_span], [a1[i], a2[i]])
         #bleu1 += compute_bleu([[a1[i],a2[i]]], [predicted_span], max_order=1)[0]
-        #bleu4 += compute_bleu([[a1[i],a2[i]]], [predicted_span])[0]    
+        #bleu4 += compute_bleu([[a1[i],a2[i]]], [predicted_span])[0]
         preds.append(predicted_span)
-    
-    return (rouge_score, bleu1, bleu4, another_rouge, preds)
+        sample_scores.append(another_rouge)
+    return (rouge_score, bleu1, bleu4, another_rouge, preds, sample_scores)
 
 def reset_embeddings(word_embeddings, fixed_embeddings, trained_idx):
     word_embeddings.weight.data[trained_idx] = torch.FloatTensor(fixed_embeddings[trained_idx]).cuda()
@@ -339,6 +335,7 @@ def main(args):
             all_a1 = []
             all_a2 = []
             all_ids = []
+            all_scores = []
             nlloss = torch.nn.NLLLoss()
             for batch in dev_loader:
                 c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2, _id = batch
@@ -376,6 +373,7 @@ def main(args):
                 all_a1.extend(a1)
                 all_a2.extend(a2)
                 all_ids.extend(_id)
+                all_scores.extend(batch_score[5])
                 dev_start_acc += torch.sum(torch.eq(pred_start.cpu(), start)).item()
                 dev_end_acc += torch.sum(torch.eq(pred_end.cpu(), end)).item()
             avg_rouge = rouge_scores / len(dev)
@@ -391,7 +389,7 @@ def main(args):
             # word_response_dict = dict(enumerate(map(lambda item: [item],all_preds)))
             # coco_bleu, coco_bleus = bleu_obj.compute_score(word_target_dict, word_response_dict)
             # coco_bleu1, _, _, coco_bleu4 = coco_bleu
-            dev_output = [{'prediction': pred, 'answer1': a1, 'answer2':a2, '_id':_id} for pred, a1, a2, _id in zip(all_preds, all_a1, all_a2, all_ids)]
+            dev_output = [{'prediction': pred, 'answer1': a1, 'answer2':a2, 'rouge_score':s, '_id':_id} for pred, a1, a2, s, _id in zip(all_preds, all_a1, all_a2, all_scores, all_ids)]
             logger.info("iter %r: dev loss %.4f dev average rouge score %.4f, another rouge %.4f, bleu1 score %.4f, bleu4 score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, dev_loss/len(dev_loader), avg_rouge, another_rouge_avg, avg_bleu1, avg_bleu4, dev_start_acc, dev_end_acc, time.time() - start_time))
             scheduler.step(avg_rouge)
             if avg_rouge > best:
