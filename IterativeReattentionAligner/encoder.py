@@ -5,12 +5,13 @@ from torch.autograd import Variable
 import numpy as np
 from modules import IterativeAligner
 from loss import DCRLLoss
+from decoder import Decoder
 
 class MnemicReader(nn.Module):
     ## model(c_vec, c_pos, c_ner, c_em, c_mask, q_vec, q_pos, q_ner, q_em, q_mask, start, end)
     def __init__(self, input_size, hidden_size, num_layers, char_emb_dim, 
                     pos_emb_dim, ner_emb_dim, word_embeddings, num_char, 
-                    num_pos, num_ner, emb_dropout=0.0, rnn_dropout=0.0):
+                    num_pos, num_ner, common_embeddings, emb_dropout=0.0, rnn_dropout=0.0):
         super(MnemicReader, self).__init__()
         self.num_layers = num_layers
         self.rnn = nn.ModuleList()            
@@ -55,8 +56,23 @@ class MnemicReader(nn.Module):
             self.rnn.append(lstm)
 
         self.use_RLLoss = False
+        self.generative_decoder = Decoder(hidden_size*2,hidden_size, common_embeddings, common_embeddings.shape[0], 15, 0.4)
+        self.gen_loss = nn.NLLLoss()
+        self.fc_in = nn.Linear(word_embeddings.shape[1], hidden_size*2)
 
-    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, context, a1, a2):
+    def prepare_decoder_input(self, s_index, e_index, context):
+        batch_size, seq_len, hidden_size = context.shape        
+        cut = e_index - s_index
+        max_len = torch.max(cut)
+        max_len += 3
+        decoder_input = torch.zeros(batch_size, max_len, hidden_size).to(context.device)
+        for i in range(batch_size):
+            decoder_input[i,0,:] = self.fc_in(self.word_embeddings(torch.Tensor([2]).long().to(context.device)))
+            decoder_input[i,1:e_index[i]-s_index[i]+2,:] = context[i,s_index[i]:e_index[i]+1,:]
+            decoder_input[i,e_index[i]-s_index[i]+2,:] = self.fc_in(self.word_embeddings(torch.Tensor([3]).long().to(context.device)))
+        return decoder_input
+
+    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, context, a1, a2, a_vec):
         '''
             x.shape = (seq_len, batch, input_size) == (sentence_len, batch, emb_dim)
         '''
@@ -103,7 +119,7 @@ class MnemicReader(nn.Module):
         enc_con = torch.cat(enc_con, 2).transpose(0, 1) # (batch_size, seq_len, enc_con_dim)
         enc_que = torch.cat(enc_que, 2).transpose(0, 1) # (batch_size, seq_len, enc_que_dim)
         
-        s_prob, e_prob, probs = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
+        s_prob, e_prob, probs, final_context = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
         #print (s_prob.shape, e_prob.shape)
         #print (start, end)
         #print (torch.gather(s_prob.squeeze(), 1, start.unsqueeze(1)))
@@ -126,6 +142,15 @@ class MnemicReader(nn.Module):
         max_idx = torch.argmax(probs, dim=1)
         s_index = max_idx // context_len
         e_index = max_idx % context_len
+
+        decode_input = self.prepare_decoder_input(s_index, e_index, final_context)
+        generate_output = self.generative_decoder(decode_input, a_vec)
+        generate_output = generate_output[:,1:,:].contiguous().view(-1, generate_output.shape[-1])
+        generate_output = F.softmax(generate_output, dim=1)
+        eps = 1e-8
+        generate_output = (1-eps)*generate_output + eps*torch.min(generate_output[generate_output != 0])
+        generate_loss = self.gen_loss(torch.log(generate_output), a_vec[:,1:].contiguous().view(-1))
+        loss += generate_loss
         if not self.use_RLLoss:
             return loss, loss, s_index, e_index
 
@@ -206,7 +231,7 @@ class MnemicReader(nn.Module):
         #print (torch.sum(c_em, dim=1))
         #print (torch.sum(q_em, dim=1))
         #print (c_mask.device, q_mask.device)
-        s_prob, e_prob, pointer_probs = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
+        s_prob, e_prob, pointer_probs, final_context = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
 
         s_prob = torch.squeeze(s_prob)
         e_prob = torch.squeeze(e_prob)
@@ -220,7 +245,9 @@ class MnemicReader(nn.Module):
         max_idx = torch.argmax(pointer_probs, dim=1)
         s_index = max_idx // context_len
         e_index = max_idx % context_len
-        return s_index, e_index, torch.log(s_prob), torch.log(e_prob)
+        decode_input = self.prepare_decoder_input(s_index, e_index, final_context)
+        generate_output = self.generative_decoder.generate(decode_input)
+        return s_index, e_index, torch.log(s_prob), torch.log(e_prob), generate_output
 
 if __name__ == '__main__':
     seq_len = 60

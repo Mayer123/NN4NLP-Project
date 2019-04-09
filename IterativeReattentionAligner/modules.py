@@ -256,7 +256,7 @@ class IterativeAligner(nn.Module):
         p1, p2, p = self.answer_pointer(v, v_lens, R, r_lens)        
         # print "p1.shape", p1.shape
         # print 'p2.shape', p2.shape
-        return p1, p2, p
+        return p1, p2, p, R
         
 
 if __name__ == '__main__':
