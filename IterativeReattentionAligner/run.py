@@ -49,8 +49,8 @@ def add_arguments(parser):
     parser.add_argument('--dicts_dir', type=str, default=None, help='Directory containing the word dictionaries')
     parser.add_argument('--seed', type=int, default=6, help='Random seed for the experiment')
     parser.add_argument('--epochs', type=int, default=20, help='Train data iterations')
-    parser.add_argument('--train_batch_size', type=int, default=32, help='Batch size for training')
-    parser.add_argument('--dev_batch_size', type=int, default=32, help='Batch size for dev')
+    parser.add_argument('--train_batch_size', type=int, default=24, help='Batch size for training')
+    parser.add_argument('--dev_batch_size', type=int, default=24, help='Batch size for dev')
     parser.add_argument('--hidden_size', type=int, default=100, help='Hidden size for LSTM')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of layers for LSTM')
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
@@ -98,19 +98,22 @@ def build_dicts(data):
         ner_dict[k] = i + 2
     for i, (k, v) in enumerate(c2i.most_common()):
         char_dict[k] = i + 2
-    count = 0
-    count1 = 0
-    for sample in data:
-        for w in sample['answers'][0].lower():
-            count += 1
-            if w in common_vocab:
-                count1 += 1
-        for w in sample['answers'][1].lower():
-            count += 1
-            if w in common_vocab:
-                count1 += 1
-    print (count)
-    print (count1)
+    # count = 0
+    # count1 = 0
+    # for sample in data:
+    #     for w in sample['answers'][0].lower():
+    #         count += 1
+    #         if w in common_vocab:
+    #             count1 += 1
+    #     for w in sample['answers'][1].lower():
+    #         count += 1
+    #         if w in common_vocab:
+    #             count1 += 1
+    # print (count)
+    # print (count1)
+
+    for k,v in common_vocab.items():
+        assert v == word_dict[k]
     # 0 for padding and 1 for unk
     for d in ['word_dict', 'tag_dict', 'ner_dict', 'char_dict']:
         with open('../prepro/dicts/%s.json'%d, 'w') as f:
@@ -224,7 +227,7 @@ def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
             predicted_span = ' '.join(context[i][start[i]:end[i]+1])
         if predicted_span in stoplist:
             predicted_span = 'NO-ANSWER-FOUND'
-        #print ('Extracted Span %s' % predicted_span)
+        print ('Extracted Span %s' % predicted_span)
         #print ("Sample output " + str(start[i]) +" " + str(end[i]) + " " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
         #score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
         #return score
@@ -242,6 +245,7 @@ def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
 def generate_answer(indices, id2words):
     words = []
     skip = [0, 1, 2]
+    print (indices)
     for idx in indices:
         if idx in skip:
             continue
@@ -258,9 +262,9 @@ def generate_scores(rouge, generate_output, id2words, a1, a2):
         if pred_ans in stoplist or pred_ans == '':
             pred_ans = 'NO-ANSWER-FOUND'
         rouge_score += max(rouge.get_scores(pred_ans, a1[i])[0]['rouge-l']['f'], rouge.get_scores(pred_ans, a2[i])[0]['rouge-l']['f'])
-        #print ('Generated Output %s' % pred_ans)
-        #print (a1[i])
-        #print (a2[i])
+        print ('Generated Output %s' % pred_ans)
+        print (a1[i])
+        print (a2[i])
     return rouge_score
 
 def reset_embeddings(word_embeddings, fixed_embeddings, trained_idx):
@@ -297,7 +301,7 @@ def main(args):
     print (len(w2i), len(tag2i), len(ner2i), len(c2i), len(common_vocab))
     train = convert_data(training_data, w2i, tag2i, ner2i, c2i, common_vocab, 800)
     dev = convert_data(dev_data, w2i, tag2i, ner2i, c2i, common_vocab)
-    #dev = list(dev)[0:32]
+    dev = list(dev)[0:32]
     id2words = {}
     for k, v in common_vocab.items():
         id2words[v] = k
@@ -307,7 +311,7 @@ def main(args):
     print (len(dev))
     logger.info('Generating embeddings')
     embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
-    common_embeddings, _ = generate_embeddings(args.embedding_file, common_vocab)
+    #common_embeddings, _ = generate_embeddings(args.embedding_file, common_vocab)
     train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=args.train_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
     dev_loader = torch.utils.data.DataLoader(dev, batch_size=args.dev_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
     #print (embeddings.shape)
@@ -316,7 +320,7 @@ def main(args):
     input_size = embeddings.shape[1] + args.char_emb_size * 2 + args.pos_emb_size + args.ner_emb_size + 1
     model = MnemicReader(input_size, args.hidden_size, args.num_layers, 
                             args.char_emb_size, args.pos_emb_size, args.ner_emb_size, 
-                            embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, common_embeddings,
+                            embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, len(common_vocab)+4,
                             args.emb_dropout, args.rnn_dropout)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
@@ -349,6 +353,8 @@ def main(args):
             c_vec, c_pos, c_ner, c_em, c_char, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
             q_vec, q_pos, q_ner, q_em, q_char, q_mask = pad_sequence(q_vec, q_pos, q_ner, q_char, q_em)
             a_vec = pad_answer(a_vec)
+            if global_step == 1:
+                print (a_vec)
             start = torch.as_tensor(start)
             end = torch.as_tensor(end)
             c_em = c_em.float()

@@ -11,7 +11,7 @@ class MnemicReader(nn.Module):
     ## model(c_vec, c_pos, c_ner, c_em, c_mask, q_vec, q_pos, q_ner, q_em, q_mask, start, end)
     def __init__(self, input_size, hidden_size, num_layers, char_emb_dim, 
                     pos_emb_dim, ner_emb_dim, word_embeddings, num_char, 
-                    num_pos, num_ner, common_embeddings, emb_dropout=0.0, rnn_dropout=0.0):
+                    num_pos, num_ner, vocab_size, emb_dropout=0.0, rnn_dropout=0.0):
         super(MnemicReader, self).__init__()
         self.num_layers = num_layers
         self.rnn = nn.ModuleList()            
@@ -28,7 +28,8 @@ class MnemicReader(nn.Module):
             nn.Embedding(num_ner, ner_emb_dim, padding_idx=0),
             nn.Dropout(emb_dropout)
             )
-        
+        self.vocab_size = vocab_size
+        self.emb_size = word_embeddings.shape[1]
         self.word_embeddings = torch.nn.Embedding(word_embeddings.shape[0], word_embeddings.shape[1], 
                                                     padding_idx=0)
         self.word_embeddings.weight.data.copy_(torch.from_numpy(word_embeddings))
@@ -56,8 +57,8 @@ class MnemicReader(nn.Module):
             self.rnn.append(lstm)
 
         self.use_RLLoss = False
-        self.generative_decoder = Decoder(hidden_size*2,hidden_size, common_embeddings, common_embeddings.shape[0], 15, 0.4)
-        self.gen_loss = nn.NLLLoss()
+        self.generative_decoder = Decoder(hidden_size*2,hidden_size, self.word_embeddings, self.emb_size, self.vocab_size, 15, 0.4)
+        self.gen_loss = nn.NLLLoss(ignore_index=0)
         self.fc_in = nn.Linear(word_embeddings.shape[1], hidden_size*2)
 
     def prepare_decoder_input(self, s_index, e_index, context):
@@ -150,7 +151,7 @@ class MnemicReader(nn.Module):
         eps = 1e-8
         generate_output = (1-eps)*generate_output + eps*torch.min(generate_output[generate_output != 0])
         generate_loss = self.gen_loss(torch.log(generate_output), a_vec[:,1:].contiguous().view(-1))
-        loss += generate_loss
+        loss = generate_loss
         if not self.use_RLLoss:
             return loss, loss, s_index, e_index
 
