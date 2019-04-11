@@ -59,7 +59,8 @@ def add_arguments(parser):
     parser.add_argument('--emb_dropout', type=float, default=0.3, help='Dropout rate for embedding layers')
     parser.add_argument('--rnn_dropout', type=float, default=0.3, help='Dropout rate for RNN layers')
     parser.add_argument('--log_file', type=str, default="RMR.log", help='path to the log file')
-
+    parser.add_argument('--save_results', action='store_true', help='path to the log file')
+    parser.add_argument('--RL_loss_after', type=int, default=3, help='path to the log file')
 def build_dicts(data):    
     w2i = Counter()
     tag2i = Counter()
@@ -318,6 +319,7 @@ def main(args):
                             args.char_emb_size, args.pos_emb_size, args.ner_emb_size, 
                             embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, common_embeddings,
                             args.emb_dropout, args.rnn_dropout)
+    mode = torch.load('best_model2.pt')
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
                                                             factor=0.5, patience=0,
@@ -340,7 +342,7 @@ def main(args):
         train_rouge_score = 0.0
         start_time = time.time()
         model.train()
-        if ITER >= 3:
+        if ITER >= args.RL_loss_after:
             model.use_RLLoss = True
         for batch in tqdm.tqdm(train_loader):
             global_step += 1
@@ -380,8 +382,10 @@ def main(args):
             #torch.nn.utils.clip_grad_norm_(model.parameters(),10)
             optimizer.step()
             reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
-            if global_step % 100 == 0:
-                logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
+
+            # if global_step % 100 == 0:
+            #     logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
+
         Train_Rouge.append(train_rouge_score/len(train))
         Train_Loss.append(train_CE_loss/len(train_loader))
         logger.info("iter %r global_step %s : train loss/batch=%.4f, train CE loss/batch %.4f, train rouge score %.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), train_CE_loss/len(train_loader), train_rouge_score/len(train), time.time() - start_time))
@@ -460,9 +464,10 @@ def main(args):
             scheduler.step(avg_rouge)
             if avg_rouge > best:
                 best = avg_rouge
-                torch.save(model, 'best_model2')
-                with open('Best_dev_output.json', 'w') as fout:
-                    json.dump(dev_output, fout)
+                if args.save_results:
+                    torch.save(model, 'best_model2')
+                    with open('Best_dev_output.json', 'w') as fout:
+                        json.dump(dev_output, fout)
     exp_stats = {'training_loss':Train_Loss, 'dev_loss':Dev_Loss, 'training_rouge':Train_Rouge, 'dev_rouge':Dev_Rouge}
     with open('experiment_stats.json', 'w') as fout:
         json.dump(exp_stats, fout)
