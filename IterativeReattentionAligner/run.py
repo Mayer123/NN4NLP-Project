@@ -59,7 +59,8 @@ def add_arguments(parser):
     parser.add_argument('--emb_dropout', type=float, default=0.3, help='Dropout rate for embedding layers')
     parser.add_argument('--rnn_dropout', type=float, default=0.3, help='Dropout rate for RNN layers')
     parser.add_argument('--log_file', type=str, default="RMR.log", help='path to the log file')
-
+    parser.add_argument('--save_results', action='store_true', help='path to the log file')
+    parser.add_argument('--RL_loss_after', type=int, default=3, help='path to the log file')
 def build_dicts(data):    
     w2i = Counter()
     tag2i = Counter()
@@ -114,6 +115,19 @@ def build_dicts(data):
 
     for k,v in common_vocab.items():
         assert v == word_dict[k]
+    count = 0
+    count1 = 0
+    for sample in data:
+        for w in sample['answers'][0].lower():
+            count += 1
+            if w in common_vocab:
+                count1 += 1
+        for w in sample['answers'][1].lower():
+            count += 1
+            if w in common_vocab:
+                count1 += 1
+    print (count)
+    print (count1)
     # 0 for padding and 1 for unk
     for d in ['word_dict', 'tag_dict', 'ner_dict', 'char_dict']:
         with open('../prepro/dicts/%s.json'%d, 'w') as f:
@@ -228,6 +242,7 @@ def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
         if predicted_span in stoplist:
             predicted_span = 'NO-ANSWER-FOUND'
         print ('Extracted Span %s' % predicted_span)
+        #print ('Extracted Span %s' % predicted_span)
         #print ("Sample output " + str(start[i]) +" " + str(end[i]) + " " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
         #score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
         #return score
@@ -262,9 +277,12 @@ def generate_scores(rouge, generate_output, id2words, a1, a2):
         if pred_ans in stoplist or pred_ans == '':
             pred_ans = 'NO-ANSWER-FOUND'
         rouge_score += max(rouge.get_scores(pred_ans, a1[i])[0]['rouge-l']['f'], rouge.get_scores(pred_ans, a2[i])[0]['rouge-l']['f'])
-        print ('Generated Output %s' % pred_ans)
-        print (a1[i])
-        print (a2[i])
+        #print ('Generated Output %s' % pred_ans)
+        #print (a1[i])
+        #print (a2[i])
+        #print ('Generated Output %s' % pred_ans)
+        #print (a1[i])
+        #print (a2[i])
     return rouge_score
 
 def reset_embeddings(word_embeddings, fixed_embeddings, trained_idx):
@@ -302,6 +320,7 @@ def main(args):
     train = convert_data(training_data, w2i, tag2i, ner2i, c2i, common_vocab, 800)
     dev = convert_data(dev_data, w2i, tag2i, ner2i, c2i, common_vocab)
     dev = list(dev)[0:32]
+    #dev = list(dev)[0:32]
     id2words = {}
     for k, v in common_vocab.items():
         id2words[v] = k
@@ -312,6 +331,7 @@ def main(args):
     logger.info('Generating embeddings')
     embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
     #common_embeddings, _ = generate_embeddings(args.embedding_file, common_vocab)
+    common_embeddings, _ = generate_embeddings(args.embedding_file, common_vocab)
     train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=args.train_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
     dev_loader = torch.utils.data.DataLoader(dev, batch_size=args.dev_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
     #print (embeddings.shape)
@@ -321,7 +341,9 @@ def main(args):
     model = MnemicReader(input_size, args.hidden_size, args.num_layers, 
                             args.char_emb_size, args.pos_emb_size, args.ner_emb_size, 
                             embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, len(common_vocab)+4,
+                            embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, common_embeddings,
                             args.emb_dropout, args.rnn_dropout)
+    mode = torch.load('best_model2.pt')
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
                                                             factor=0.5, patience=0,
@@ -344,7 +366,7 @@ def main(args):
         train_rouge_score = 0.0
         start_time = time.time()
         model.train()
-        if ITER >= 3:
+        if ITER >= args.RL_loss_after:
             model.use_RLLoss = True
         for batch in tqdm.tqdm(train_loader):
             global_step += 1
@@ -355,7 +377,6 @@ def main(args):
             a_vec = pad_answer(a_vec)
             if global_step == 1:
                 print (a_vec)
-            start = torch.as_tensor(start)
             end = torch.as_tensor(end)
             c_em = c_em.float()
             q_em = q_em.float()
@@ -388,6 +409,8 @@ def main(args):
             reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
             if global_step % 100 == 0:
                 logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
+            # if global_step % 100 == 0:
+            #     logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
         Train_Rouge.append(train_rouge_score/len(train))
         Train_Loss.append(train_CE_loss/len(train_loader))
         logger.info("iter %r global_step %s : train loss/batch=%.4f, train CE loss/batch %.4f, train rouge score %.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), train_CE_loss/len(train_loader), train_rouge_score/len(train), time.time() - start_time))
@@ -466,9 +489,10 @@ def main(args):
             scheduler.step(avg_rouge)
             if avg_rouge > best:
                 best = avg_rouge
-                torch.save(model, 'best_model2')
-                with open('Best_dev_output.json', 'w') as fout:
-                    json.dump(dev_output, fout)
+                if args.save_results:
+                    torch.save(model, 'best_model2')
+                    with open('Best_dev_output.json', 'w') as fout:
+                        json.dump(dev_output, fout)
     exp_stats = {'training_loss':Train_Loss, 'dev_loss':Dev_Loss, 'training_rouge':Train_Rouge, 'dev_rouge':Dev_Rouge}
     with open('experiment_stats.json', 'w') as fout:
         json.dump(exp_stats, fout)
