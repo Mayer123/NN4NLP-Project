@@ -72,7 +72,29 @@ class MnemicReader(nn.Module):
             decoder_input[i,e_index[i]-s_index[i]+2,:] = self.fc_in(self.word_embeddings(torch.Tensor([3]).long().to(context.device)))
         return decoder_input
 
-    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, context, a1, a2, a_vec):
+    def char_lstm_forward(self, char, char_lens):
+        # c_char is 3d (batch, words, chars)        
+        char_squeezed = char.view(-1, char.size()[2])        
+        char_e = self.char_emb(char_squeezed)
+
+        char_len_squeezed = char_lens.view(-1,)
+        sorted_idx = sorted(range(len(char_len_squeezed)), key=lambda i: char_len_squeezed[i], reverse=True)
+        rev_sorted_idx = sorted(range(len(sorted_idx)), key=lambda i: sorted_idx[i], reverse=True)
+        
+        char_e = char_e[sorted_idx]
+        char_e = char_e.transpose(0,1)
+        char_len_squeezed = char_len_squeezed[sorted_idx]        
+        
+        char_e = nn.utils.rnn.pack_padded_sequence(char_e, char_len_squeezed, batch_first=False)       
+        con_char_lstm = self.char_lstm(char_e)[1][0]
+        
+        con_char_lstm = con_char_lstm[:,rev_sorted_idx,:]        
+        con_char_lstm = torch.cat((con_char_lstm[0,:,:],con_char_lstm[1,:,:]), 1)        
+        con_char = con_char_lstm.view(char.size()[0], char.size()[1], -1)
+
+        return con_char
+
+    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, context, a1, a2, a_vec):
         '''
             x.shape = (seq_len, batch, input_size) == (sentence_len, batch, emb_dim)
         '''
@@ -80,30 +102,46 @@ class MnemicReader(nn.Module):
         con_pos = self.pos_emb(c_pos)
         con_ner = self.ner_emb(c_ner) 
 
-        # c_char is 3d (words, batch, index)
- 
-        c_char_squeezed = c_char.view(-1, c_char.size()[2]).transpose(0,1)
-        c_char_e = self.char_emb(c_char_squeezed)
-        con_char_lstm = self.char_lstm(c_char_e)[1][0]
-        con_char_lstm = torch.cat((con_char_lstm[0,:,:],con_char_lstm[1,:,:]), 1)
         
-        con_char = con_char_lstm.view(c_char.size()[0], c_char.size()[1], -1)
+        con_char = self.char_lstm_forward(c_char, c_char_lens)
+        con_char *= c_mask.unsqueeze(2).float()        
 
         que_vec = self.word_embeddings(q_vec)
         que_pos = self.pos_emb(q_pos)
-        que_ner = self.ner_emb(q_ner)
+        que_ner = self.ner_emb(q_ner)        
 
-        q_char_squeezed = q_char.view(-1, q_char.size()[2]).transpose(0,1)
-        q_char_e = self.char_emb(q_char_squeezed)    
-        que_char_lstm = self.char_lstm(q_char_e)[1][0]
-        que_char_lstm = torch.cat((que_char_lstm[0,:,:], que_char_lstm[1,:,:]), 1)
+        que_char = self.char_lstm_forward(q_char, q_char_lens)
+        que_char *= q_mask.unsqueeze(2).float()
 
-        que_char = que_char_lstm.view(q_char.size()[0], q_char.size()[1], -1)
+        # con_vec = self.word_embeddings(c_vec)
+        # con_pos = self.pos_emb(c_pos)
+        # con_ner = self.ner_emb(c_ner) 
+
+        # # c_char is 3d (words, batch, index)
+ 
+        # c_char_squeezed = c_char.view(-1, c_char.size()[2]).transpose(0,1)
+        # c_char_e = self.char_emb(c_char_squeezed)
+        # con_char_lstm = self.char_lstm(c_char_e)[1][0]
+        # con_char_lstm = torch.cat((con_char_lstm[0,:,:],con_char_lstm[1,:,:]), 1)
+        
+        # con_char = con_char_lstm.view(c_char.size()[0], c_char.size()[1], -1)
+
+        # que_vec = self.word_embeddings(q_vec)
+        # que_pos = self.pos_emb(q_pos)
+        # que_ner = self.ner_emb(q_ner)
+
+        # q_char_squeezed = q_char.view(-1, q_char.size()[2]).transpose(0,1)
+        # q_char_e = self.char_emb(q_char_squeezed)    
+        # que_char_lstm = self.char_lstm(q_char_e)[1][0]
+        # que_char_lstm = torch.cat((que_char_lstm[0,:,:], que_char_lstm[1,:,:]), 1)
+
+        # que_char = que_char_lstm.view(q_char.size()[0], q_char.size()[1], -1)
 
         con_input = torch.cat([con_vec, con_char, con_pos, con_ner, c_em.unsqueeze(2)], 2)
         que_input = torch.cat([que_vec, que_char, que_pos, que_ner, q_em.unsqueeze(2)], 2)
         x1 = con_input.transpose(0, 1)
         x2 = que_input.transpose(0, 1)
+        
 
         enc_con = []
         enc_que = []
@@ -117,8 +155,8 @@ class MnemicReader(nn.Module):
             x2 = self.rnn_dropout(x2)
 
         enc_con = torch.cat(enc_con, 2).transpose(0, 1) # (batch_size, seq_len, enc_con_dim)
-        enc_que = torch.cat(enc_que, 2).transpose(0, 1) # (batch_size, seq_len, enc_que_dim)
-        
+        enc_que = torch.cat(enc_que, 2).transpose(0, 1) # (batch_size, seq_len, enc_que_dim)            
+
         s_prob, e_prob, probs, final_context = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
         #print (s_prob.shape, e_prob.shape)
         #print (start, end)
@@ -184,7 +222,7 @@ class MnemicReader(nn.Module):
         #total_loss = (loss1+loss2)*self.weight_a+rl_loss*self.weight_b
         return loss * a1 + rl_loss * a2 + b1 + b2, loss, s_index, e_index
 
-    def evaluate(self, c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask):
+    def evaluate(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask):
         '''
             x.shape = (seq_len, batch, input_size) == (sentence_len, batch, emb_dim)
         '''
@@ -192,25 +230,36 @@ class MnemicReader(nn.Module):
         con_pos = self.pos_emb(c_pos)
         con_ner = self.ner_emb(c_ner) 
 
-        # c_char is 3d (words, batch, index)
- 
-        c_char_squeezed = c_char.view(-1, c_char.size()[2]).transpose(0,1)
-        c_char_e = self.char_emb(c_char_squeezed)
-        con_char_lstm = self.char_lstm(c_char_e)[1][0]
-        con_char_lstm = torch.cat((con_char_lstm[0,:,:],con_char_lstm[1,:,:]), 1)
         
-        con_char = con_char_lstm.view(c_char.size()[0], c_char.size()[1], -1)
+        con_char = self.char_lstm_forward(c_char, c_char_lens)
+        con_char *= c_mask.unsqueeze(2).float()        
 
         que_vec = self.word_embeddings(q_vec)
         que_pos = self.pos_emb(q_pos)
-        que_ner = self.ner_emb(q_ner)
+        que_ner = self.ner_emb(q_ner)        
 
-        q_char_squeezed = q_char.view(-1, q_char.size()[2]).transpose(0,1)
-        q_char_e = self.char_emb(q_char_squeezed)    
-        que_char_lstm = self.char_lstm(q_char_e)[1][0]
-        que_char_lstm = torch.cat((que_char_lstm[0,:,:], que_char_lstm[1,:,:]), 1)
+        que_char = self.char_lstm_forward(q_char, q_char_lens)
+        que_char *= q_mask.unsqueeze(2).float()
 
-        que_char = que_char_lstm.view(q_char.size()[0], q_char.size()[1], -1)
+        # c_char is 3d (words, batch, index)
+ 
+        # c_char_squeezed = c_char.view(-1, c_char.size()[2]).transpose(0,1)
+        # c_char_e = self.char_emb(c_char_squeezed)
+        # con_char_lstm = self.char_lstm(c_char_e)[1][0]
+        # con_char_lstm = torch.cat((con_char_lstm[0,:,:],con_char_lstm[1,:,:]), 1)
+        
+        # con_char = con_char_lstm.view(c_char.size()[0], c_char.size()[1], -1)
+
+        # que_vec = self.word_embeddings(q_vec)
+        # que_pos = self.pos_emb(q_pos)
+        # que_ner = self.ner_emb(q_ner)
+
+        # q_char_squeezed = q_char.view(-1, q_char.size()[2]).transpose(0,1)
+        # q_char_e = self.char_emb(q_char_squeezed)    
+        # que_char_lstm = self.char_lstm(q_char_e)[1][0]
+        # que_char_lstm = torch.cat((que_char_lstm[0,:,:], que_char_lstm[1,:,:]), 1)
+
+        # que_char = que_char_lstm.view(q_char.size()[0], q_char.size()[1], -1)
 
         con_input = torch.cat([con_vec, con_char, con_pos, con_ner, c_em.unsqueeze(2)], 2)
         que_input = torch.cat([que_vec, que_char, que_pos, que_ner, q_em.unsqueeze(2)], 2)

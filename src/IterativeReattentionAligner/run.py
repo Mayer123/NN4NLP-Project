@@ -112,10 +112,6 @@ def build_dicts(data):
                 count1 += 1
     print (count)
     print (count1)
-    # 0 for padding and 1 for unk
-    for d in ['word_dict', 'tag_dict', 'ner_dict', 'char_dict']:
-        with open('../prepro/dicts/%s.json'%d, 'w') as f:
-            json.dump(locals()[d], f)
     return word_dict, tag_dict, ner_dict, char_dict, common_vocab
 
 def convert_data(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=-1):
@@ -175,8 +171,7 @@ def generate_embeddings(filename, word_dict):
                 trained_idx.append(word_dict[tokens[0]])
                 embeddings[word_dict[tokens[0]]] = np.array(list(map(float, tokens[1:])))
                 count += 1
-    #logger.info('Total vocab size %s pre-trained words %s' % (len(word_dict), count))
-    np.save("../prepro/embeddings.npy", embeddings)
+    
     return embeddings, trained_idx
 
 def pad_sequence(sentences, pos, ner, char, em):
@@ -187,6 +182,7 @@ def pad_sequence(sentences, pos, ner, char, em):
     char_batch = np.zeros((len(sentences), max_len, 16), dtype=int)
     em_batch = np.zeros((len(sentences), max_len), dtype=int)
     masks = np.zeros((len(sentences), max_len), dtype=int)
+    char_lens = np.ones((len(sentences), max_len), dtype=int)
     for i, sent in enumerate(sentences):
         sent_batch[i,:len(sent)] = np.array(sent)
         pos_batch[i,:len(pos[i])] = np.array(pos[i])
@@ -196,10 +192,12 @@ def pad_sequence(sentences, pos, ner, char, em):
         for j, word in enumerate(sent):
             if len(char[i][j]) > 16:
                 char_batch[i, j, :16] = np.array(char[i][j][:16])
+                char_lens[i,j] = 16
             else:
                 char_batch[i, j, :len(char[i][j])] = np.array(char[i][j])
+                char_lens[i,j] = len(char[i][j])
     #print([len(sent) for sent in sentences])
-    return torch.as_tensor(sent_batch), torch.as_tensor(pos_batch), torch.as_tensor(ner_batch), torch.as_tensor(em_batch), torch.as_tensor(char_batch), torch.as_tensor(masks)
+    return torch.as_tensor(sent_batch), torch.as_tensor(pos_batch), torch.as_tensor(ner_batch), torch.as_tensor(em_batch), torch.as_tensor(char_batch), torch.as_tensor(char_lens), torch.as_tensor(masks)
 
 def pad_answer(answers):
     max_len = max([len(ans) for ans in answers])
@@ -319,7 +317,7 @@ def main(args):
                             args.char_emb_size, args.pos_emb_size, args.ner_emb_size, 
                             embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, common_embeddings,
                             args.emb_dropout, args.rnn_dropout)
-    mode = torch.load('best_model2.pt')
+    
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
                                                             factor=0.5, patience=0,
@@ -348,8 +346,8 @@ def main(args):
             global_step += 1
             #print (global_step)
             c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2, _id, a_vec = batch
-            c_vec, c_pos, c_ner, c_em, c_char, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
-            q_vec, q_pos, q_ner, q_em, q_char, q_mask = pad_sequence(q_vec, q_pos, q_ner, q_char, q_em)
+            c_vec, c_pos, c_ner, c_em, c_char, c_char_lens, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
+            q_vec, q_pos, q_ner, q_em, q_char, q_char_lens, q_mask = pad_sequence(q_vec, q_pos, q_ner, q_char, q_em)
             a_vec = pad_answer(a_vec)
             start = torch.as_tensor(start)
             end = torch.as_tensor(end)
@@ -372,7 +370,7 @@ def main(args):
                 end = end.cuda()
                 a_vec = a_vec.cuda()
             
-            batch_loss, CE_loss, s_index, e_index = model(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, c, a1, a2, a_vec)
+            batch_loss, CE_loss, s_index, e_index = model(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, c, a1, a2, a_vec)
             train_loss += batch_loss.cpu().item()
             train_CE_loss += CE_loss.cpu().item()
             #batch_score = compute_scores(rouge, rrrouge, s_index.tolist(), e_index.tolist(), c, a1, a2)
@@ -407,8 +405,8 @@ def main(args):
             nlloss = torch.nn.NLLLoss()
             for batch in dev_loader:
                 c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2, _id, a_vec = batch
-                c_vec, c_pos, c_ner, c_em, c_char, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
-                q_vec, q_pos, q_ner, q_em, q_char, q_mask = pad_sequence(q_vec, q_pos, q_ner, q_char, q_em)
+                c_vec, c_pos, c_ner, c_em, c_char, c_char_lens, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
+                q_vec, q_pos, q_ner, q_em, q_char, q_char_lens, q_mask = pad_sequence(q_vec, q_pos, q_ner, q_char, q_em)
                 start = torch.as_tensor(start)
                 end = torch.as_tensor(end)
                 c_em = c_em.float()
@@ -427,7 +425,7 @@ def main(args):
                     q_em = q_em.cuda()
                     q_mask = q_mask.cuda()
 
-                pred_start, pred_end, s_prob, e_prob, generate_output = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask)
+                pred_start, pred_end, s_prob, e_prob, generate_output = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask)
                 loss1 = nlloss(s_prob.cpu(), start)
                 loss2 = nlloss(e_prob.cpu(), end)
                 CE_loss = loss1 + loss2
