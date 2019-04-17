@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/home/mshah1/narrativeQA/NN4NLP-Project/')
+sys.path.append('/home/mshah1/narrativeQA/NN4NLP-Project/src')
 import numpy as np
 import torch
 from torch import nn

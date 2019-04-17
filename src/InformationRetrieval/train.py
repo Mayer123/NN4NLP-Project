@@ -26,6 +26,12 @@ class PairwiseDataset(D.Dataset):
     def __len__(self):
         return len(self.Qs)
 
+def pad(a, padlen):
+    print (a)    
+    pad = np.zeros((padlen, a.shape[1]))
+    padded = np.concatenate((a,pad), axis=0)
+    return padded
+
 def mCollateFn(samples):
     Qs = []
     Ps = []
@@ -46,9 +52,12 @@ def mCollateFn(samples):
     plens = torch.tensor([len(p) for p in Ps]).long()
     nlens = torch.tensor([len(n) for n in Ns]).long()
 
-    Qs = torch.tensor([np.pad(q, ((0,max_q_len-len(q)),), 'constant') for q in Qs]).long()
-    Ps = torch.tensor([np.pad(p, ((0,max_p_len-len(p)),), 'constant') for p in Ps]).long()
-    Ns = torch.tensor([np.pad(n, ((0,max_n_len-len(n)),), 'constant') for n in Ns]).long()
+    Qs = torch.tensor([np.pad(q, ((0,max_q_len-len(q)),) + ((0,0),)*(len(q.shape)-1), 'constant') for q in Qs]).long()
+    Ps = torch.tensor([np.pad(p, ((0,max_p_len-len(p)),) + ((0,0),)*(len(p.shape)-1), 'constant') for p in Ps]).long()
+    Ns = torch.tensor([np.pad(n, ((0,max_n_len-len(n)),) + ((0,0),)*(len(n.shape)-1), 'constant') for n in Ns]).long()
+    # Qs = torch.tensor([pad(q, max_q_len-len(q)) for q in Qs]).long()
+    # Ps = torch.tensor([pad(p, max_p_len-len(p)) for p in Ps]).long()
+    # Ns = torch.tensor([pad(n, max_n_len-len(n)) for n in Ns]).long()
     ys = torch.tensor(ys).float()
 
     return Qs, Ps, Ns, ys, qlens, plens, nlens
@@ -69,7 +78,15 @@ def generate_embeddings(filename, word_dict):
     #logger.info('Total vocab size %s pre-trained words %s' % (len(word_dict), count))
     np.save("../prepro/embeddings.npy", embeddings)
     return embeddings, trained_idx
-                
+
+def computeMetrics(p_scores, n_scores):
+    labels = [1]*len(p_scores) + [0]*len(n_scores)
+    all_scores = torch.cat((p_scores, n_scores), dim=0)
+    sorted_labels = sorted(labels, 
+                        key=lambda i: all_scores[i])    
+    metrics = {'r@100': sum(sorted_labels[:100])}
+    return metrics
+
 def train(args):
     global logger
     
@@ -85,8 +102,9 @@ def train(args):
 
     w2i = {'<pad>': 0,
             '<unk>' : 1}
+    pos2i = w2i.copy()
 
-    train_data_gen = convert_data(args.train_file, w2i)
+    train_data_gen = convert_data(args.train_file, w2i, pos2i)
     Q_train, P_train, N_train, y_train = getIRPretrainData(train_data_gen)
     train_ds = PairwiseDataset(Q_train, P_train, N_train, y_train)
     train_dl = D.DataLoader(train_ds, batch_size=args.train_batch_size, shuffle=True,
@@ -107,7 +125,7 @@ def train(args):
     if args.load_model != '':
         model = torch.load(args.load_model)
     else:
-        model = AttentionRM(init_emb=embeddings)
+        model = AttentionRM(init_emb=embeddings, pos_vocab_size=len(pos2i))
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', 
@@ -122,33 +140,35 @@ def train(args):
     logger.info('-' * 100)
     global_step = 0
     best = float('inf')    
-    Train_Loss = []    
+    Train_Loss = []
+    Train_metric = []
     Dev_Loss = []
+    Dev_metric = []
     for ITER in range(args.epochs):
         train_loss = 0.0
         model.train()
-        # with tqdm.tqdm(train_dl) as t:
-        #     for batch in t:
-        #         global_step += 1
-        #         q, p, n, y, qlen, plen, nlen = batch
-        #         if use_cuda:
-        #             q = q.cuda()
-        #             p = p.cuda()
-        #             n = n.cuda()
-        #             y = y.cuda()
-        #             qlen = qlen.cuda()
-        #             plen = plen.cuda()
-        #             nlen = nlen.cuda()
-        #         o1 = model(q, p, qlen, plen)
-        #         o2 = model(q, n, qlen, nlen)
-        #         loss = criterion(o1, o2, y)
+        with tqdm.tqdm(train_dl) as t:
+            for batch in t:
+                global_step += 1
+                q, p, n, y, qlen, plen, nlen = batch
+                if use_cuda:
+                    q = q.cuda()
+                    p = p.cuda()
+                    n = n.cuda()
+                    y = y.cuda()
+                    qlen = qlen.cuda()
+                    plen = plen.cuda()
+                    nlen = nlen.cuda()
+                o1 = model(q, p, qlen, plen)
+                o2 = model(q, n, qlen, nlen)
+                loss = criterion(o1, o2, y)
                 
-        #         optimizer.zero_grad()
-        #         loss.backward()
-        #         optimizer.step()
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-        #         Train_Loss.append(float(loss))
-        #         t.set_postfix(loss=float(np.mean(Train_Loss)))
+                Train_Loss.append(float(loss))
+                t.set_postfix(loss=float(np.mean(Train_Loss)))
         model = model.eval()
         with torch.no_grad():
             for batch in dev_dl:

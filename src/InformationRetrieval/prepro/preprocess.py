@@ -7,7 +7,7 @@ from nltk.tokenize import word_tokenize, sent_tokenize
 from sklearn.preprocessing import StandardScaler
 import itertools
 
-def convert_data(datafile, w2i={}, update_dict=True):	
+def convert_data(datafile, w2i={}, pos2i={}, update_dict=True):	
 	if datafile.split('.')[-1] == 'json':
 		with open(datafile) as f:
 			data = json.load(f)
@@ -45,12 +45,15 @@ def convert_data(datafile, w2i={}, update_dict=True):
 			passage_scores = []
 			for (paraI, sentI, score) in passages:
 				passage_scores.append(score)
-				sent = context[paraI][sentI][0]
-				words = word_tokenize(sent)				
+				words = context[paraI][sentI][1]
+				pos = context[paraI][sentI][2]
 				if update_dict:
-					passage_idxs.append([w2i.setdefault(w, len(w2i)) for w in words])
+					widx = [w2i.setdefault(w, len(w2i)) for w in words]
+					posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
 				else:
-					passage_idxs.append([w2i.get(w, w2i['<unk>']) for w in words])
+					widx = [w2i.get(w, w2i['<unk>']) for w in words]
+					posidx = [pos2i.get(p, w2i['<unk>']) for p in pos]
+				passage_idxs.append(np.stack((widx, posidx), axis=1))
 			if len(passage_idxs) > 0:
 				yield(qidx, a1idx, a2idx, passage_idxs, passage_scores)
 
@@ -65,8 +68,8 @@ def getIRPretrainData(data_gen):
 	np.random.seed(0)
 	for qidx, _, _, didxs, dscores in data_gen:
 		count += 1
-		# if count == 10:
-			# break
+		# if count == 50:
+		# 	break
 		sys.stdout.write("\r%d" % count)
 		sys.stdout.flush()	
 
@@ -79,24 +82,26 @@ def getIRPretrainData(data_gen):
 									reverse=True)		
 		# idxs = np.arange(len(dscores))
 		posIdx = score_sorted_idx[:100]
-		negIdx = score_sorted_idx[len(posIdx):][-100:]
+		negIdx = score_sorted_idx[len(posIdx):]
 
-		# np.random.shuffle(posIdx)
-		# np.random.shuffle(negIdx)
+		np.random.shuffle(posIdx)
+		np.random.shuffle(negIdx)
 
-		# pairs = zip(posIdx, negIdx)
+		# # pairs = zip(posIdx, negIdx)
 
 		if len(negIdx) == 0:
 			continue
 
-		pairs = list(itertools.product(posIdx, negIdx))		
-		np.random.shuffle(pairs)
-		pairs = pairs[:1500]
+		# idxs = np.arange(len(dscores))
+		# np.random.shuffle(idxs)
+		pairs_gen = itertools.product(posIdx, negIdx)
+		# np.random.shuffle(pairs)
+		pairs = [next(pairs_gen) for i in range(min(len(posIdx) * len(negIdx), 200))]
 
 		for pi, ni in pairs:			
-			Qs.append(qidx)
-			Ps.append(didxs[pi])
-			Ns.append(didxs[ni])
+			Qs.append(np.array(qidx))
+			Ps.append(np.array(didxs[pi]))
+			Ns.append(np.array(didxs[ni]))
 			
 			y.append(dscores[pi]-dscores[ni])
 
@@ -112,7 +117,7 @@ def getIRPretrainData(data_gen):
 	return Qs, Ps, Ns, y
 
 if __name__ == '__main__':
-	gen = convert_data('/home/kaixinm/NN4NLP-Project/prepro/narrativeqa_train_fulltext_subset.pickle')
+	gen = convert_data('/home/kaixinm/NN4NLP-Project/prepro/narrativeqa_dev_fulltext_redo.pickle')
 	q, p, n, y = getIRPretrainData(gen)
 	print(q.shape, p.shape, n.shape, y.shape)	
 	print(q[500])

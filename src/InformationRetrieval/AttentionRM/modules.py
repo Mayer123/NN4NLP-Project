@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/home/mshah1/narrativeQA/NN4NLP-Project/')
+sys.path.append('/home/mshah1/narrativeQA/NN4NLP-Project/src')
 import numpy as np
 import torch
 from torch import nn
@@ -25,14 +25,15 @@ class GaussianKernel(object):
 class AttentionRM(nn.Module):
 	"""docstring for ConvKNRM"""
 	def __init__(self, init_emb=None, emb_trainable=True, vocab_size=None, 
-					emb_dim=100, nfilters=64, max_ngram=3, xmatch_ngrams=True, 
-					nkernels=11, sigma=0.1, exact_sigma=0.001, dropout=0.3):
+					pos_vocab_size=None, emb_dim=100, dropout=0.3):
 		super(AttentionRM, self).__init__()
 		if init_emb is not None:
 			self.emb = nn.Embedding.from_pretrained(init_emb, 
 										freeze=(not emb_trainable))
 		else:
 			self.emb = nn.Embedding(vocab_size, emb_dim)
+		self.pos_emb = nn.Embedding(pos_vocab_size, emb_dim)
+		self.emb_proj = nn.Linear(2*emb_dim, emb_dim)
 
 		self.evidence_collector = nn.Sequential(
 			nn.Conv1d(emb_dim, emb_dim, 5, padding=2),
@@ -55,7 +56,11 @@ class AttentionRM(nn.Module):
 		self.emb_dropout = nn.Dropout(dropout)
 	def forward(self, q, d, qlen, dlen):
 		q_emb = self.emb_dropout(self.emb(q))
-		d_emb = self.emb_dropout(self.emb(d))
+		dw_emb = self.emb_dropout(self.emb(d[:,:,0]))
+		dp_emb = self.emb_dropout(self.pos_emb(d[:,:,1]))
+		# print(d.shape, dw_emb.shape, dp_emb.shape)
+		d_emb = self.emb_proj(torch.cat((dw_emb, dp_emb), dim=2))
+		d_emb = self.emb_dropout(d_emb)
 
 		qng, qng_len, _ = self.interactive_aligner(d_emb, q_emb,
 												dlen, qlen)
