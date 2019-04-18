@@ -15,9 +15,6 @@ import cProfile, pstats, io
 from nltk.translate.bleu_score import sentence_bleu
 import re
 
-stoplist = set(['.',',', '...', '..'])
-
-
 from CSMrouge import RRRouge
 from bleu import Bleu
 
@@ -49,8 +46,8 @@ def add_arguments(parser):
     parser.add_argument('--dicts_dir', type=str, default=None, help='Directory containing the word dictionaries')
     parser.add_argument('--seed', type=int, default=6, help='Random seed for the experiment')
     parser.add_argument('--epochs', type=int, default=20, help='Train data iterations')
-    parser.add_argument('--train_batch_size', type=int, default=24, help='Batch size for training')
-    parser.add_argument('--dev_batch_size', type=int, default=24, help='Batch size for dev')
+    parser.add_argument('--train_batch_size', type=int, default=32, help='Batch size for training')
+    parser.add_argument('--dev_batch_size', type=int, default=32, help='Batch size for dev')
     parser.add_argument('--hidden_size', type=int, default=100, help='Hidden size for LSTM')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of layers for LSTM')
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
@@ -88,7 +85,7 @@ def build_dicts(data):
     char_dict = {}
     common_vocab = {}
     for i, (k, v) in enumerate(w2i.most_common()):
-        if v >= 31:
+        if v >= 500:
             common_vocab[k] = i + 4                         # <SOS> for 2 <EOS> for 3
     for i, (k, v) in enumerate(w2i.most_common()):
         word_dict[k] = i + 4                         # <SOS> for 2 <EOS> for 3
@@ -100,17 +97,53 @@ def build_dicts(data):
         char_dict[k] = i + 2
     # count = 0
     # count1 = 0
+    # count2 = 0
+    # count3 = 0
+    # count4 = 0
+    # count5 = 0
+    # count6 = 0
+    # count7 = 0
     # for sample in data:
-    #     for w in sample['answers'][0].lower():
+    #     for w in sample['answers'][0].lower().split():
     #         count += 1
-    #         if w in common_vocab:
+    #         if w2i[w] < 30:
     #             count1 += 1
-    #     for w in sample['answers'][1].lower():
+    #         if w2i[w] < 50:
+    #             count2 += 1
+    #         if w2i[w] < 100:
+    #             count3 += 1
+    #         if w2i[w] < 200:
+    #             count4 += 1
+    #         if w2i[w] < 300:
+    #             count5 += 1
+    #         if w2i[w] < 400:
+    #             count6 += 1
+    #         if w2i[w] < 500:
+    #             count7 += 1
+    #     for w in sample['answers'][1].lower().split():
     #         count += 1
-    #         if w in common_vocab:
+    #         if w2i[w] < 30:
     #             count1 += 1
+    #         if w2i[w] < 50:
+    #             count2 += 1
+    #         if w2i[w] < 100:
+    #             count3 += 1
+    #         if w2i[w] < 200:
+    #             count4 += 1
+    #         if w2i[w] < 300:
+    #             count5 += 1
+    #         if w2i[w] < 400:
+    #             count6 += 1
+    #         if w2i[w] < 500:
+    #             count7 += 1
     # print (count)
-    # print (count1)
+    # print (count1/float(count), len([k for k, v in w2i.most_common() if v > 30])/float(len(w2i)))
+    # print (count2/float(count), len([k for k, v in w2i.most_common() if v > 50])/float(len(w2i)))
+    # print (count3/float(count), len([k for k, v in w2i.most_common() if v > 100])/float(len(w2i)))
+    # print (count4/float(count), len([k for k, v in w2i.most_common() if v > 200 ])/float(len(w2i)))
+    # print (count5/float(count), len([k for k, v in w2i.most_common() if v > 300])/float(len(w2i)))
+    # print (count6/float(count), len([k for k, v in w2i.most_common() if v > 400])/float(len(w2i)))
+    # print (count7/float(count), len([k for k, v in w2i.most_common() if v > 500])/float(len(w2i)))
 
     for k,v in common_vocab.items():
         assert v == word_dict[k]
@@ -227,7 +260,7 @@ def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
             predicted_span = ' '.join(context[i][start[i]:end[i]+1])
         if predicted_span in stoplist:
             predicted_span = 'NO-ANSWER-FOUND'
-        print ('Extracted Span %s' % predicted_span)
+        # print ('Extracted Span %s' % predicted_span)
         #print ("Sample output " + str(start[i]) +" " + str(end[i]) + " " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
         #score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
         #return score
@@ -245,7 +278,7 @@ def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
 def generate_answer(indices, id2words):
     words = []
     skip = [0, 1, 2]
-    print (indices)
+    # print (indices)
     for idx in indices:
         if idx in skip:
             continue
@@ -262,9 +295,9 @@ def generate_scores(rouge, generate_output, id2words, a1, a2):
         if pred_ans in stoplist or pred_ans == '':
             pred_ans = 'NO-ANSWER-FOUND'
         rouge_score += max(rouge.get_scores(pred_ans, a1[i])[0]['rouge-l']['f'], rouge.get_scores(pred_ans, a2[i])[0]['rouge-l']['f'])
-        print ('Generated Output %s' % pred_ans)
-        print (a1[i])
-        print (a2[i])
+        # print ('Generated Output %s' % pred_ans)
+        # print (a1[i])
+        # print (a2[i])
     return rouge_score
 
 def reset_embeddings(word_embeddings, fixed_embeddings, trained_idx):
@@ -301,7 +334,7 @@ def main(args):
     print (len(w2i), len(tag2i), len(ner2i), len(c2i), len(common_vocab))
     train = convert_data(training_data, w2i, tag2i, ner2i, c2i, common_vocab, 800)
     dev = convert_data(dev_data, w2i, tag2i, ner2i, c2i, common_vocab)
-    dev = list(dev)[0:32]
+    #dev = list(dev)[0:32]
     id2words = {}
     for k, v in common_vocab.items():
         id2words[v] = k
@@ -311,7 +344,6 @@ def main(args):
     print (len(dev))
     logger.info('Generating embeddings')
     embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
-    #common_embeddings, _ = generate_embeddings(args.embedding_file, common_vocab)
     train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=args.train_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
     dev_loader = torch.utils.data.DataLoader(dev, batch_size=args.dev_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
     #print (embeddings.shape)
@@ -322,7 +354,7 @@ def main(args):
                             args.char_emb_size, args.pos_emb_size, args.ner_emb_size, 
                             embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, len(common_vocab)+4,
                             args.emb_dropout, args.rnn_dropout)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
                                                             factor=0.5, patience=0,
                                                             verbose=True)
@@ -352,9 +384,9 @@ def main(args):
             c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2, _id, a_vec = batch
             c_vec, c_pos, c_ner, c_em, c_char, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
             q_vec, q_pos, q_ner, q_em, q_char, q_mask = pad_sequence(q_vec, q_pos, q_ner, q_char, q_em)
-            a_vec = pad_answer(a_vec)
-            if global_step == 1:
-                print (a_vec)
+            # a_vec = pad_answer(a_vec)
+            # if global_step == 1:
+            #     print (a_vec)
             start = torch.as_tensor(start)
             end = torch.as_tensor(end)
             c_em = c_em.float()
@@ -374,20 +406,23 @@ def main(args):
                 q_mask = q_mask.cuda()
                 start = start.cuda()
                 end = end.cuda()
-                a_vec = a_vec.cuda()
+                #a_vec = a_vec.cuda()
             
             batch_loss, CE_loss, s_index, e_index = model(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start, end, c, a1, a2, a_vec)
             train_loss += batch_loss.cpu().item()
             train_CE_loss += CE_loss.cpu().item()
+            #tmp = generate_scores(rouge, gen_out.tolist(), id2words, a1, a2)
             #batch_score = compute_scores(rouge, rrrouge, s_index.tolist(), e_index.tolist(), c, a1, a2)
             #train_rouge_score += batch_score[0]
             optimizer.zero_grad()
             batch_loss.backward()
-            #torch.nn.utils.clip_grad_norm_(model.parameters(),10)
+            #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
             optimizer.step()
             reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
-            if global_step % 100 == 0:
-                logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
+            # if global_step % 100 == 0:
+            #     print (gen_out)
+            #     print (a_vec)
+            #     logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
         Train_Rouge.append(train_rouge_score/len(train))
         Train_Loss.append(train_CE_loss/len(train_loader))
         logger.info("iter %r global_step %s : train loss/batch=%.4f, train CE loss/batch %.4f, train rouge score %.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), train_CE_loss/len(train_loader), train_rouge_score/len(train), time.time() - start_time))
@@ -429,13 +464,13 @@ def main(args):
                     q_em = q_em.cuda()
                     q_mask = q_mask.cuda()
 
-                pred_start, pred_end, s_prob, e_prob, generate_output = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask)
+                pred_start, pred_end, s_prob, e_prob = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask)
                 loss1 = nlloss(s_prob.cpu(), start)
                 loss2 = nlloss(e_prob.cpu(), end)
                 CE_loss = loss1 + loss2
                 dev_loss += CE_loss.cpu().item()
                 batch_score = compute_scores(rouge, rrrouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
-                gen_rouge += generate_scores(rouge, generate_output.tolist(), id2words, a1, a2)
+                #gen_rouge += generate_scores(rouge, generate_output.tolist(), id2words, a1, a2)
                 rouge_scores += batch_score[0]
                 bleu1_scores += batch_score[1]
                 bleu4_scores += batch_score[2]
