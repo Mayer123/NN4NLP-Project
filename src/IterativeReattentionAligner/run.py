@@ -59,6 +59,8 @@ def add_arguments(parser):
     parser.add_argument('--emb_dropout', type=float, default=0.3, help='Dropout rate for embedding layers')
     parser.add_argument('--rnn_dropout', type=float, default=0.3, help='Dropout rate for RNN layers')
     parser.add_argument('--log_file', type=str, default="RMR.log", help='path to the log file')
+    parser.add_argument('--load_model', type=str, default="", help='path to the log file')
+    parser.add_argument('--model_name', type=str, default="rmr.pt", help='path to the log file')
     parser.add_argument('--save_results', action='store_true', help='path to the log file')
     parser.add_argument('--RL_loss_after', type=int, default=3, help='path to the log file')
 def build_dicts(data):    
@@ -313,10 +315,13 @@ def main(args):
     use_cuda = torch.cuda.is_available()
     #use_cuda = False
     input_size = embeddings.shape[1] + args.char_emb_size * 2 + args.pos_emb_size + args.ner_emb_size + 1
-    model = MnemicReader(input_size, args.hidden_size, args.num_layers, 
+    if args.load_model == '':
+        model = MnemicReader(input_size, args.hidden_size, args.num_layers, 
                             args.char_emb_size, args.pos_emb_size, args.ner_emb_size, 
                             embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, common_embeddings,
                             args.emb_dropout, args.rnn_dropout)
+    else:
+        model = torch.load(args.load_model)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
@@ -334,6 +339,7 @@ def main(args):
     Train_Loss = []
     Dev_Rouge = []
     Dev_Loss = []
+    pr = cProfile.Profile()
     for ITER in range(args.epochs):
         train_loss = 0.0
         train_CE_loss = 0.0
@@ -343,6 +349,7 @@ def main(args):
         if ITER >= args.RL_loss_after:
             model.use_RLLoss = True
         for batch in tqdm.tqdm(train_loader):
+            # pr.enable()
             global_step += 1
             #print (global_step)
             c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2, _id, a_vec = batch
@@ -380,7 +387,12 @@ def main(args):
             #torch.nn.utils.clip_grad_norm_(model.parameters(),10)
             optimizer.step()
             reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
-
+            # pr.disable()
+            # s = io.StringIO()
+            # ps = pstats.Stats(pr, stream=s).sort_stats('tottime')
+            # ps.print_stats()
+            # print(s.getvalue())
+            # return
             # if global_step % 100 == 0:
             #     logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
 
@@ -459,11 +471,12 @@ def main(args):
             # coco_bleu1, _, _, coco_bleu4 = coco_bleu
             dev_output = [{'prediction': pred, 'answer1': a1, 'answer2':a2, 'rouge_score':s, '_id':_id} for pred, a1, a2, s, _id in zip(all_preds, all_a1, all_a2, all_scores, all_ids)]
             logger.info("iter %r: dev loss %.4f dev generate rouge %.4f dev average rouge score %.4f, another rouge %.4f, bleu1 score %.4f, bleu4 score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, dev_loss/len(dev_loader), gen_rouge_avg, avg_rouge, another_rouge_avg, avg_bleu1, avg_bleu4, dev_start_acc, dev_end_acc, time.time() - start_time))
-            scheduler.step(avg_rouge)
+            if model.use_RLLoss == True:
+                scheduler.step(avg_rouge)
             if avg_rouge > best:
                 best = avg_rouge
                 if args.save_results:
-                    torch.save(model, 'best_model2')
+                    torch.save(model, args.model_name)
                     with open('Best_dev_output.json', 'w') as fout:
                         json.dump(dev_output, fout)
     exp_stats = {'training_loss':Train_Loss, 'dev_loss':Dev_Loss, 'training_rouge':Train_Rouge, 'dev_rouge':Dev_Rouge}

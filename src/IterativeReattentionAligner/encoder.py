@@ -42,7 +42,7 @@ class MnemicReader(nn.Module):
         self.aligningBlock = IterativeAligner( 2 * hidden_size, hidden_size, 1, 3, dropout=rnn_dropout)
 
         self.loss = nn.NLLLoss()
-        self.DCRL_loss = DCRLLoss(4)
+        self.DCRL_loss = DCRLLoss(6)
         #self.weight_a = torch.pow(torch.randn(1, requires_grad=True), 2)
         #self.weight_b = torch.pow(torch.randn(1, requires_grad=True), 2)
         self.weight_a = torch.randn(1, requires_grad=True)
@@ -77,27 +77,23 @@ class MnemicReader(nn.Module):
         char_squeezed = char.view(-1, char.size()[2])        
         char_e = self.char_emb(char_squeezed)
 
-        char_len_squeezed = char_lens.view(-1,)
-        sorted_idx = sorted(range(len(char_len_squeezed)), key=lambda i: char_len_squeezed[i], reverse=True)
-        rev_sorted_idx = sorted(range(len(sorted_idx)), key=lambda i: sorted_idx[i], reverse=True)
+        # char_len_squeezed = char_lens.view(-1,)
+        # char_len_squeezed, sorted_idx = torch.sort(char_len_squeezed, descending=True)
+        # _,rev_sorted_idx = torch.sort(sorted_idx)
         
-        char_e = char_e[sorted_idx]
-        char_e = char_e.transpose(0,1)
-        char_len_squeezed = char_len_squeezed[sorted_idx]        
+        # char_e = char_e[sorted_idx]
+        char_e = char_e.transpose(0,1)        
         
-        char_e = nn.utils.rnn.pack_padded_sequence(char_e, char_len_squeezed, batch_first=False)       
+        # char_e = nn.utils.rnn.pack_padded_sequence(char_e, char_len_squeezed)       
         con_char_lstm = self.char_lstm(char_e)[1][0]
         
-        con_char_lstm = con_char_lstm[:,rev_sorted_idx,:]        
+        # con_char_lstm = con_char_lstm[:,rev_sorted_idx,:]        
         con_char_lstm = torch.cat((con_char_lstm[0,:,:],con_char_lstm[1,:,:]), 1)        
         con_char = con_char_lstm.view(char.size()[0], char.size()[1], -1)
 
         return con_char
 
-    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, context, a1, a2, a_vec):
-        '''
-            x.shape = (seq_len, batch, input_size) == (sentence_len, batch, emb_dim)
-        '''
+    def getAnswerSpanProbs(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask):
         con_vec = self.word_embeddings(c_vec)
         con_pos = self.pos_emb(c_pos)
         con_ner = self.ner_emb(c_ner) 
@@ -113,51 +109,48 @@ class MnemicReader(nn.Module):
         que_char = self.char_lstm_forward(q_char, q_char_lens)
         que_char *= q_mask.unsqueeze(2).float()
 
-        # con_vec = self.word_embeddings(c_vec)
-        # con_pos = self.pos_emb(c_pos)
-        # con_ner = self.ner_emb(c_ner) 
-
-        # # c_char is 3d (words, batch, index)
- 
-        # c_char_squeezed = c_char.view(-1, c_char.size()[2]).transpose(0,1)
-        # c_char_e = self.char_emb(c_char_squeezed)
-        # con_char_lstm = self.char_lstm(c_char_e)[1][0]
-        # con_char_lstm = torch.cat((con_char_lstm[0,:,:],con_char_lstm[1,:,:]), 1)
-        
-        # con_char = con_char_lstm.view(c_char.size()[0], c_char.size()[1], -1)
-
-        # que_vec = self.word_embeddings(q_vec)
-        # que_pos = self.pos_emb(q_pos)
-        # que_ner = self.ner_emb(q_ner)
-
-        # q_char_squeezed = q_char.view(-1, q_char.size()[2]).transpose(0,1)
-        # q_char_e = self.char_emb(q_char_squeezed)    
-        # que_char_lstm = self.char_lstm(q_char_e)[1][0]
-        # que_char_lstm = torch.cat((que_char_lstm[0,:,:], que_char_lstm[1,:,:]), 1)
-
-        # que_char = que_char_lstm.view(q_char.size()[0], q_char.size()[1], -1)
-
         con_input = torch.cat([con_vec, con_char, con_pos, con_ner, c_em.unsqueeze(2)], 2)
         que_input = torch.cat([que_vec, que_char, que_pos, que_ner, q_em.unsqueeze(2)], 2)
         x1 = con_input.transpose(0, 1)
+        x1_len, x1_sorted_idx = torch.sort(torch.sum(c_mask, dim=1), descending=True)
+        _, x1_rev_sorted_idx = torch.sort(x1_sorted_idx)
+        packed_x1 = nn.utils.rnn.pack_padded_sequence(x1[:,x1_sorted_idx,:], x1_len)
+
         x2 = que_input.transpose(0, 1)
+        x2_len, x2_sorted_idx = torch.sort(torch.sum(q_mask, dim=1), descending=True)
+        _, x2_rev_sorted_idx = torch.sort(x2_sorted_idx)
+        packed_x2 = nn.utils.rnn.pack_padded_sequence(x2[:,x2_sorted_idx,:], x2_len)
         
 
         enc_con = []
         enc_que = []
         for i in range(self.num_layers):
-            x1 = self.rnn[i](x1)[0]
-            x1 = self.rnn_dropout(x1)
-            enc_con.append(x1)
+            packed_x1 = self.rnn[i](packed_x1)[0]
+            x1, x1_len = nn.utils.rnn.pad_packed_sequence(packed_x1)
+            x1 = self.rnn_dropout(x1)            
+            enc_con.append(x1[:,x1_rev_sorted_idx,:])            
 
-            x2 = self.rnn[i](x2)[0]
-            enc_que.append(x2)
-            x2 = self.rnn_dropout(x2)
+            packed_x2 = self.rnn[i](packed_x2)[0]            
+            x2, x2_len = nn.utils.rnn.pad_packed_sequence(packed_x2)
+            x2 = self.rnn_dropout(x2)            
+            enc_que.append(x2[:,x2_rev_sorted_idx,:])
+
+            if i < self.num_layers -1:
+                packed_x1 = nn.utils.rnn.pack_padded_sequence(x1, x1_len)
+                packed_x2 = nn.utils.rnn.pack_padded_sequence(x2, x2_len)
 
         enc_con = torch.cat(enc_con, 2).transpose(0, 1) # (batch_size, seq_len, enc_con_dim)
         enc_que = torch.cat(enc_que, 2).transpose(0, 1) # (batch_size, seq_len, enc_que_dim)            
 
         s_prob, e_prob, probs, final_context = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
+        
+        return s_prob, e_prob, probs, final_context
+
+    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, context, a1, a2, a_vec):
+        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
+                                                                        c_em, c_char_lens, c_mask, q_vec, 
+                                                                        q_pos, q_ner, q_char, q_em, 
+                                                                        q_char_lens, q_mask)
         #print (s_prob.shape, e_prob.shape)
         #print (start, end)
         #print (torch.gather(s_prob.squeeze(), 1, start.unsqueeze(1)))
@@ -174,21 +167,21 @@ class MnemicReader(nn.Module):
         loss2 = self.loss(torch.log(e_prob), end)
         loss = loss1 + loss2
 
-        context_len = enc_con.shape[1]
+        context_len = s_prob.shape[1]
         #loss = self.loss(probs, start*context_len + end)
         
         max_idx = torch.argmax(probs, dim=1)
         s_index = max_idx // context_len
         e_index = max_idx % context_len
 
-        decode_input = self.prepare_decoder_input(s_index, e_index, final_context)
-        generate_output = self.generative_decoder(decode_input, a_vec)
-        generate_output = generate_output[:,1:,:].contiguous().view(-1, generate_output.shape[-1])
-        generate_output = F.softmax(generate_output, dim=1)
-        eps = 1e-8
-        generate_output = (1-eps)*generate_output + eps*torch.min(generate_output[generate_output != 0])
-        generate_loss = self.gen_loss(torch.log(generate_output), a_vec[:,1:].contiguous().view(-1))
-        loss += generate_loss
+        # decode_input = self.prepare_decoder_input(s_index, e_index, final_context)
+        # generate_output = self.generative_decoder(decode_input, a_vec)
+        # generate_output = generate_output[:,1:,:].contiguous().view(-1, generate_output.shape[-1])
+        # generate_output = F.softmax(generate_output, dim=1)
+        # eps = 1e-8
+        # generate_output = (1-eps)*generate_output + eps*torch.min(generate_output[generate_output != 0])
+        # generate_loss = self.gen_loss(torch.log(generate_output), a_vec[:,1:].contiguous().view(-1))
+        # loss += generate_loss
         if not self.use_RLLoss:
             return loss, loss, s_index, e_index
 
@@ -223,75 +216,16 @@ class MnemicReader(nn.Module):
         return loss * a1 + rl_loss * a2 + b1 + b2, loss, s_index, e_index
 
     def evaluate(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask):
-        '''
-            x.shape = (seq_len, batch, input_size) == (sentence_len, batch, emb_dim)
-        '''
-        con_vec = self.word_embeddings(c_vec)
-        con_pos = self.pos_emb(c_pos)
-        con_ner = self.ner_emb(c_ner) 
-
-        
-        con_char = self.char_lstm_forward(c_char, c_char_lens)
-        con_char *= c_mask.unsqueeze(2).float()        
-
-        que_vec = self.word_embeddings(q_vec)
-        que_pos = self.pos_emb(q_pos)
-        que_ner = self.ner_emb(q_ner)        
-
-        que_char = self.char_lstm_forward(q_char, q_char_lens)
-        que_char *= q_mask.unsqueeze(2).float()
-
-        # c_char is 3d (words, batch, index)
- 
-        # c_char_squeezed = c_char.view(-1, c_char.size()[2]).transpose(0,1)
-        # c_char_e = self.char_emb(c_char_squeezed)
-        # con_char_lstm = self.char_lstm(c_char_e)[1][0]
-        # con_char_lstm = torch.cat((con_char_lstm[0,:,:],con_char_lstm[1,:,:]), 1)
-        
-        # con_char = con_char_lstm.view(c_char.size()[0], c_char.size()[1], -1)
-
-        # que_vec = self.word_embeddings(q_vec)
-        # que_pos = self.pos_emb(q_pos)
-        # que_ner = self.ner_emb(q_ner)
-
-        # q_char_squeezed = q_char.view(-1, q_char.size()[2]).transpose(0,1)
-        # q_char_e = self.char_emb(q_char_squeezed)    
-        # que_char_lstm = self.char_lstm(q_char_e)[1][0]
-        # que_char_lstm = torch.cat((que_char_lstm[0,:,:], que_char_lstm[1,:,:]), 1)
-
-        # que_char = que_char_lstm.view(q_char.size()[0], q_char.size()[1], -1)
-
-        con_input = torch.cat([con_vec, con_char, con_pos, con_ner, c_em.unsqueeze(2)], 2)
-        que_input = torch.cat([que_vec, que_char, que_pos, que_ner, q_em.unsqueeze(2)], 2)
-        x1 = con_input.transpose(0, 1)
-        x2 = que_input.transpose(0, 1)
-
-        enc_con = []
-        enc_que = []
-        for i in range(self.num_layers):
-            x1 = self.rnn[i](x1)[0]
-            enc_con.append(x1)
-            x2 = self.rnn[i](x2)[0]
-            enc_que.append(x2)
-
-        enc_con = torch.cat(enc_con, 2).transpose(0, 1) # (batch_size, seq_len, enc_con_dim)
-        enc_que = torch.cat(enc_que, 2).transpose(0, 1) # (batch_size, seq_len, enc_que_dim)
-
-        #print (torch.sum(c_em, dim=1))
-        #print (torch.sum(q_em, dim=1))
-        #print (c_mask.device, q_mask.device)
-        s_prob, e_prob, pointer_probs, final_context = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
+        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
+                                                                        c_em, c_char_lens, c_mask, q_vec, 
+                                                                        q_pos, q_ner, q_char, q_em, 
+                                                                        q_char_lens, q_mask)
 
         s_prob = torch.squeeze(s_prob)
         e_prob = torch.squeeze(e_prob)
-        #s_prob = torch.log(s_prob)
-        #e_prob = torch.log(e_prob)
-        #loss1 = self.loss(torch.log(s_prob), start)
-        #loss2 = self.loss(torch.log(e_prob), end)
-        #loss = loss1 + loss2
 
-        context_len = enc_con.shape[1]
-        max_idx = torch.argmax(pointer_probs, dim=1)
+        context_len = s_prob.shape[1]
+        max_idx = torch.argmax(probs, dim=1)
         s_index = max_idx // context_len
         e_index = max_idx % context_len
         decode_input = self.prepare_decoder_input(s_index, e_index, final_context)
