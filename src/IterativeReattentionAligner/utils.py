@@ -4,6 +4,7 @@ import tqdm
 import random
 import torch
 import re
+import json
 
 def word_tokenize(text):
   """Split on whitespace and punctuation."""
@@ -183,7 +184,7 @@ def build_dicts(data):
         assert v == word_dict[k]
     # 0 for padding and 1 for unk
     for d in ['word_dict', 'tag_dict', 'ner_dict', 'char_dict', 'common_vocab']:
-        with open('../prepro/dicts/%s.json'%d, 'w') as f:
+        with open('../../prepro/dicts/%s.json'%d, 'w') as f:
             json.dump(locals()[d], f)
 
     return word_dict, tag_dict, ner_dict, char_dict, common_vocab
