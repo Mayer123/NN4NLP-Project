@@ -190,7 +190,6 @@ class AligningBlock(nn.Module):
         self.interactive_aligner = InteractiveAligner(enc_dim)
         self.self_aligner = SelfAligner(enc_dim)
         self.evidence_collector = nn.Sequential(
-                                    nn.Dropout(dropout),
                                     nn.LSTM(enc_dim, hidden_size, n_hidden,
                                         batch_first=True, bidirectional=True),                                    
                                   )
@@ -204,21 +203,25 @@ class AligningBlock(nn.Module):
             for z in prev_Zs:            
                 Z += z
                             
-        # z_lens, sorted_idxs = torch.sort(z_lens, descending=True)
-        # rev_sorted_idxs = sorted(range(len(sorted_idxs)), key=lambda i: sorted_idxs[i])
+        z_lens, sorted_idxs = torch.sort(z_lens.long(), descending=True)
 
-        # Z = Z[sorted_idxs]
-        # packed_Z = rnn.pack_padded_sequence(Z, z_lens, batch_first=True)
-        R, _ = self.evidence_collector(Z)
+        _,rev_sorted_idxs = torch.sort(sorted_idxs)
+        Z = Z[sorted_idxs]
+        
+        Z = self.dropout(Z)
+
+        packed_Z = rnn.pack_padded_sequence(Z, z_lens, batch_first=True)
+        R, _ = self.evidence_collector(packed_Z)        
+        R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)
+
         R = self.dropout(R) # c_check
-        # R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)    
 
-        # R = R[rev_sorted_idxs]
-        # r_lens = r_lens[rev_sorted_idxs]
-        # r_lens = r_lens.to(R.device)
+        R = R[rev_sorted_idxs]
+        r_lens = r_lens[rev_sorted_idxs]
+        r_lens = r_lens.to(R.device)
 
-        # Z = Z[rev_sorted_idxs]
-        # z_lens = z_lens[rev_sorted_idxs]
+        Z = Z[rev_sorted_idxs]
+        z_lens = z_lens[rev_sorted_idxs]
 
         return R, Z, E, B, z_lens, z_lens, h_lens        
 
@@ -227,7 +230,7 @@ class IterativeAligner(nn.Module):
     def __init__(self, enc_dim, hidden_size, n_hidden, niters, dropout=0):
         super(IterativeAligner, self).__init__()
         self.aligning_block = AligningBlock(enc_dim, hidden_size, n_hidden)
-        self.y = nn.Parameter(torch.rand(1))
+        self.y = 3# nn.Parameter(torch.rand(1))
         self.answer_pointer = AnswerPointer(enc_dim, dropout=dropout)
         assert (niters >= 1)
         self.niters = niters

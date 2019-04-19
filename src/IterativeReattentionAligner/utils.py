@@ -29,7 +29,11 @@ class FulltextDataset(torch.utils.data.Dataset):
     def __init__(self, data, batch_size):
         self.data = []
         batch = []
+        count = 0
         for sample in data:
+            count += 1
+            if count == 5:
+                break            
             if len(batch) == 0:
                 batch.append(sample)
             elif sample[0] != batch[-1][0]:
