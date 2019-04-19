@@ -42,7 +42,7 @@ class MnemicReader(nn.Module):
         self.aligningBlock = IterativeAligner( 2 * hidden_size, hidden_size, 1, 3, dropout=rnn_dropout)
 
         self.loss = nn.NLLLoss()
-        self.DCRL_loss = DCRLLoss(6)
+        self.DCRL_loss = DCRLLoss(4)
         #self.weight_a = torch.pow(torch.randn(1, requires_grad=True), 2)
         #self.weight_b = torch.pow(torch.randn(1, requires_grad=True), 2)
         self.weight_a = torch.randn(1, requires_grad=True)

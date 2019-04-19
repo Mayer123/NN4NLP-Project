@@ -204,14 +204,14 @@ class AligningBlock(nn.Module):
                 Z += z
                             
         z_lens, sorted_idxs = torch.sort(z_lens.long(), descending=True)
-        rev_sorted_idxs = sorted(range(len(sorted_idxs)), key=lambda i: sorted_idxs[i])        
+        _,rev_sorted_idxs = torch.sort(sorted_idxs)
         Z = Z[sorted_idxs]
         
         Z = self.dropout(Z)
-        
+
         packed_Z = rnn.pack_padded_sequence(Z, z_lens, batch_first=True)
         R, _ = self.evidence_collector(packed_Z)        
-        R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)    
+        R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)
         R = self.dropout(R) # c_check
 
         R = R[rev_sorted_idxs]
@@ -228,7 +228,7 @@ class IterativeAligner(nn.Module):
     def __init__(self, enc_dim, hidden_size, n_hidden, niters, dropout=0):
         super(IterativeAligner, self).__init__()
         self.aligning_block = AligningBlock(enc_dim, hidden_size, n_hidden)
-        self.y = nn.Parameter(torch.rand(1))
+        self.y = 3# nn.Parameter(torch.rand(1))
         self.answer_pointer = AnswerPointer(enc_dim, dropout=dropout)
         assert (niters >= 1)
         self.niters = niters
