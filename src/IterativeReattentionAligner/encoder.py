@@ -43,7 +43,7 @@ class MnemicReader(nn.Module):
         self.aligningBlock = IterativeAligner( 2 * hidden_size, hidden_size, 1, 3, dropout=rnn_dropout)
 
         self.loss = nn.NLLLoss()
-        self.DCRL_loss = DCRLLoss(4)
+        self.DCRL_loss = DCRLLoss(6)
         #self.weight_a = torch.pow(torch.randn(1, requires_grad=True), 2)
         #self.weight_b = torch.pow(torch.randn(1, requires_grad=True), 2)
         self.weight_a = torch.randn(1, requires_grad=True)
@@ -135,7 +135,7 @@ class MnemicReader(nn.Module):
             x2, x2_len = nn.utils.rnn.pad_packed_sequence(packed_x2)
             x2 = self.rnn_dropout(x2)            
             enc_que.append(x2[:,x2_rev_sorted_idx,:])
-
+            
             if i < self.num_layers -1:
                 packed_x1 = nn.utils.rnn.pack_padded_sequence(x1, x1_len)
                 packed_x2 = nn.utils.rnn.pack_padded_sequence(x2, x2_len)

@@ -204,6 +204,7 @@ class AligningBlock(nn.Module):
                 Z += z
                             
         z_lens, sorted_idxs = torch.sort(z_lens.long(), descending=True)
+
         _,rev_sorted_idxs = torch.sort(sorted_idxs)
         Z = Z[sorted_idxs]
         
@@ -212,6 +213,7 @@ class AligningBlock(nn.Module):
         packed_Z = rnn.pack_padded_sequence(Z, z_lens, batch_first=True)
         R, _ = self.evidence_collector(packed_Z)        
         R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)
+
         R = self.dropout(R) # c_check
 
         R = R[rev_sorted_idxs]
