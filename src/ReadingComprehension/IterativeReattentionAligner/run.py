@@ -1,5 +1,5 @@
 import sys
-sys.path.append('../')
+sys.path.append('../../')
 import json
 from collections import defaultdict, Counter
 import numpy as np
