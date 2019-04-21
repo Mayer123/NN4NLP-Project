@@ -227,10 +227,10 @@ class AligningBlock(nn.Module):
 
 class IterativeAligner(nn.Module):
     """docstring for IterativeAligner"""
-    def __init__(self, enc_dim, hidden_size, n_hidden, niters, dropout=0):
+    def __init__(self, enc_dim, hidden_size, n_hidden, niters, dropout=0, init_y=3):
         super(IterativeAligner, self).__init__()
         self.aligning_block = AligningBlock(enc_dim, hidden_size, n_hidden)
-        self.y = 3# nn.Parameter(torch.rand(1))
+        self.y = nn.Parameter(torch.zeros(1).float() + init_y)
         self.answer_pointer = AnswerPointer(enc_dim, dropout=dropout)
         assert (niters >= 1)
         self.niters = niters

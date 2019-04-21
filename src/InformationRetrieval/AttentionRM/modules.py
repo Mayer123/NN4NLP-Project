@@ -1,10 +1,9 @@
 import sys
-sys.path.append('/home/mshah1/narrativeQA/NN4NLP-Project/src')
+sys.path.append('../../')
 import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
-from utils.utils import *
 from IterativeReattentionAligner.modules import (InteractiveAligner, 
 													SelfAligner, 
 													Summarizer, 

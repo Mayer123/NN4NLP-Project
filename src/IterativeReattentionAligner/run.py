@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/home/mshah1/narrativeQA/NN4NLP-Project/src')
+sys.path.append('../')
 import json
 from collections import defaultdict, Counter
 import numpy as np
@@ -417,9 +417,9 @@ def main(args):
         model = torch.load(args.load_model)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
-    #scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
-    #                                                        factor=0.5, patience=0,
-    #                                                        verbose=True)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
+                                                           factor=0.5, patience=0,
+                                                           verbose=True)
     if use_cuda:
         torch.cuda.manual_seed(args.seed)
         model.cuda()
@@ -564,8 +564,8 @@ def main(args):
             # coco_bleu1, _, _, coco_bleu4 = coco_bleu
             dev_output = [{'prediction': pred, 'answer1': a1, 'answer2':a2, 'rouge_score':s, '_id':_id} for pred, a1, a2, s, _id in zip(all_preds, all_a1, all_a2, all_scores, all_ids)]
             logger.info("iter %r: dev loss %.4f dev generate rouge %.4f dev average rouge score %.4f, another rouge %.4f, bleu1 score %.4f, bleu4 score %.4f, start acc %.4f, end acc %.4f time=%.2fs" % (ITER, dev_loss/len(dev_loader), gen_rouge_avg, avg_rouge, another_rouge_avg, avg_bleu1, avg_bleu4, dev_start_acc, dev_end_acc, time.time() - start_time))
-            if model.use_RLLoss == True:
-                scheduler.step(avg_rouge)
+            
+            scheduler.step(avg_rouge)
             if avg_rouge > best:
                 best = avg_rouge
                 if args.save_results:
