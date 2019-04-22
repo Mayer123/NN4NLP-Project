@@ -30,10 +30,7 @@ class FulltextDataset(torch.utils.data.Dataset):
         self.data = []
         batch = []
         count = 0
-        for sample in data:
-            count += 1
-            if count == 5:
-                break            
+        for sample in data:  
             if len(batch) == 0:
                 batch.append(sample)
             elif sample[0] != batch[-1][0]:
@@ -65,43 +62,55 @@ def mCollateFn(batch):
     A1 = []
     A2 = []
     Passages = []
-    Pscores = []
-    for sample in batch:
-        for qw,qt,qn,qc,a1,a2,p,ps in sample:
-            Qwords.append(qw)
-            Qtags.append(qt)
-            Qners.append(qn)
-            Qchars.append(qc)
-            A1.append(a1)
-            A2.append(a2)
-            Passages.append([sent[0] for sent in p])
-            Pscores.append(ps)
-
-    max_q_len = max([len(q) for q in Qwords])
-    max_p_len = max([len(p) for p in Passages])
-    max_s_len = max([len(s) for p in Passages for s in p])
-    max_a_len = max([len(a) for a in A1])
+    Passagestags = []
+    assert len(batch) == 1
+    batch = batch[0]
+    idset = []
+    for i, (cid,qw,qt,qn,qc,a1,a2,p) in enumerate(batch):
+        #for i, (cid,qw,qt,qn,qc,a1,a2,p) in enumerate(sample):
+        idset.append(cid)
+        Qwords.append(qw)
+        Qtags.append(qt)
+        Qners.append(qn)
+        Qchars.append(qc)
+        A1.append(a1)
+        A2.append(a2)
+        if i == 0:
+            Passages = [sent[0] for sent in p]
+            Passagestags = [sent[1] for sent in p]
+    assert len(set(idset)) == 1
+    #max_q_len = max([len(q) for q in Qwords])
+    #max_p_len = max([len(p) for p in Passages])
+    #max_s_len = max([len(s) for s in Passages])
+    #max_a_len = max([len(a) for a in A1])
 
     qlens = torch.tensor([len(q) for q in Qwords]).long()
-    plens = torch.tensor([len(p) for p in Passages]).long()
-    slens = torch.tensor([len(s) for s in Passages[0]]).long()   # The assumption is that passages in one batch are all the same
+    #plens = torch.tensor([len(p) for p in Passages]).long()
+    slens = torch.tensor([len(s) for s in Passages]).long()   # The assumption is that passages in one batch are all the same
     alens = torch.tensor([len(a) for a in A1]).long()
+    max_q_len = torch.max(qlens)
+    max_s_len = torch.max(slens)
+    max_a_len = torch.max(alens)
 
-    Qtensor = torch.zeros(len(batch), max_q_len)
-    Ptensor = torch.zeros(len(batch), max_p_len, max_s_len)
-    Atensor = torch.zeros(len(batch), max_a_len)
- 
+    Qtensor = torch.zeros(len(batch), max_q_len).long()
+    Qtagtensor = torch.zeros(len(batch), max_q_len).long()
+    Ptensor = torch.zeros(len(Passages), max_s_len).long()
+    Ptagtensor = torch.zeros(len(Passages), max_s_len).long()
+    Atensor = torch.zeros(len(batch), max_a_len).long()    
     for i in range(len(batch)):
-        Qtensor[i, :qlens[i]] = Qwords[i]
-        Atensor[i, :alens[i]] = A1[i]
-        for j in range(len(Passages)):
-            Ptensor[i,j,:slens[j]] = Passages[i][j]
-
-    Pscores = torch.tensor(Pscores).float()
-
-    return Qtensor, Ptensor, Atensor, Pscores, qlens, plens, slens, alens, A1, A2
+        Qtensor[i, :qlens[i]] = torch.tensor(Qwords[i])
+        Qtagtensor[i, :qlens[i]] = torch.tensor(Qtags[i])
+        Atensor[i, :alens[i]] = torch.tensor(A1[i])
+        if i == 0:
+            for j in range(len(Passages)):
+                Ptensor[j,:slens[j]] = torch.tensor(Passages[j])
+                Ptagtensor[j,:slens[j]] = torch.tensor(Passagestags[j])
+    Ptensor = torch.cat([Ptensor.unsqueeze(2), Ptagtensor.unsqueeze(2)], dim=2)
+    Qtensor = torch.cat([Qtensor.unsqueeze(2), Qtagtensor.unsqueeze(2)], dim=2)
+    return Qtensor, Ptensor, Atensor, qlens, slens, alens, A1, A2
 
 def convert_fulltext(data, w2i, tag2i, ner2i, c2i, update_dict=True):   
+    context_cache = {}
     for cid in tqdm.tqdm(data):
         context = data[cid]['full_text']
         for q in data[cid]['qaps']:
@@ -110,39 +119,40 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, update_dict=True):
                 qidx = [w2i.setdefault(w, len(w2i)) for w in q['question_tokens']]      
                 a1idx = [w2i.setdefault(w, len(w2i)) for w in q['answer1_tokens']]
                 a2idx = [w2i.setdefault(w, len(w2i)) for w in q['answer2_tokens']]
-                #qtags = [tag2i.setdefault(w, len(tag2i)) for w in q['question_pos']]
+                qtags = [tag2i.setdefault(w, len(tag2i)) for w in q['question_pos']]
                 #qners = [ner2i.setdefault(w, len(ner2i)) for w in q['question_ner']]
                 #qchars = [[c2i.setdefault(c, len(c2i)) for c in w] for w in q['question_tokens']]
             else:
                 qidx = [w2i.get(w, w2i['<unk>']) for w in q['question_tokens']]       
                 a1idx = [w2i.get(w, w2i['<unk>']) for w in q['answer1_tokens']]
                 a2idx = [w2i.get(w, w2i['<unk>']) for w in q['answer2_tokens']] 
-                #qtags = [tag2i.get(w, tag2i['<unk>']) for w in q['question_pos']]   
+                qtags = [tag2i.get(w, tag2i['<unk>']) for w in q['question_pos']]   
                 #qners = [ner2i.get(w, ner2i['<unk>']) for w in q['question_ner']]
                 #qchars = [[c2i.get(c, c2i['<unk>']) for c in w] for w in q['question_tokens']]
-
-            passages = q["full_text_scores"]
-            passage_idxs = []
-            passage_scores = []
-            for (paraI, sentI, score) in passages:
-                passage_scores.append(score)
-                words = context[paraI][sentI][1]
-                pos = context[paraI][sentI][2]
-                ner = context[paraI][sentI][3]
-                posidx = neridx = charidx = []
-                if update_dict:
-                    widx = [w2i.setdefault(w, len(w2i)) for w in words]
-                    #posidx = [tag2i.setdefault(p, len(tag2i)) for p in pos]
-                    #neridx = [ner2i.setdefault(n, len(ner2i)) for n in ner]
-                    #charidx = [[c2i.setdefault(c, len(c2i)) for c in w] for w in words]
-                else:
-                    widx = [w2i.get(w, w2i['<unk>']) for w in words]
-                    #posidx = [tag2i.get(p, tag2i['<unk>']) for p in pos]
-                    #neridx = [ner2i.get(n, ner2i['<unk>']) for n in ner]
-                    #charidx = [[c2i.get(c, c2i['<unk>']) for c in w] for w in words]
-                passage_idxs.append((widx, posidx, neridx, charidx))
+            if cid in context_cache:
+                passage_idxs = context_cache[cid]
+            else:
+                passage_idxs = []
+                for para in context:
+                    for sent in para:
+                        words = sent[1]
+                        pos = sent[2]
+                        ner = sent[3]
+                        posidx = neridx = charidx = []
+                        if update_dict:
+                            widx = [w2i.setdefault(w, len(w2i)) for w in words]
+                            posidx = [tag2i.setdefault(p, len(tag2i)) for p in pos]
+                            #neridx = [ner2i.setdefault(n, len(ner2i)) for n in ner]
+                            #charidx = [[c2i.setdefault(c, len(c2i)) for c in w] for w in words]
+                        else:
+                            widx = [w2i.get(w, w2i['<unk>']) for w in words]
+                            posidx = [tag2i.get(p, tag2i['<unk>']) for p in pos]
+                            #neridx = [ner2i.get(n, ner2i['<unk>']) for n in ner]
+                            #charidx = [[c2i.get(c, c2i['<unk>']) for c in w] for w in words]
+                        passage_idxs.append((widx, posidx, neridx, charidx))
+                context_cache[cid] = passage_idxs
             if len(passage_idxs) > 0:
-                yield(cid, qidx, qtags, qners, qchars, a1idx, a2idx, passage_idxs, passage_scores)
+                yield(cid, qidx, qtags, qners, qchars, a1idx, a2idx, passage_idxs)
 
 
 def build_dicts(data):    
@@ -187,9 +197,9 @@ def build_dicts(data):
     for k,v in common_vocab.items():
         assert v == word_dict[k]
     # 0 for padding and 1 for unk
-    for d in ['word_dict', 'tag_dict', 'ner_dict', 'char_dict', 'common_vocab']:
-        with open('../../prepro/dicts/%s.json'%d, 'w') as f:
-            json.dump(locals()[d], f)
+    # for d in ['word_dict', 'tag_dict', 'ner_dict', 'char_dict', 'common_vocab']:
+    #     with open('../../prepro/dicts/%s.json'%d, 'w') as f:
+    #         json.dump(locals()[d], f)
 
     return word_dict, tag_dict, ner_dict, char_dict, common_vocab
 

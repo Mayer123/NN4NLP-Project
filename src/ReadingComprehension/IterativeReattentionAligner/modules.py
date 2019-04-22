@@ -53,8 +53,8 @@ class InteractiveAligner(nn.Module):
         # v.shape = B x n x end_dim
         
         # print "batch_size=%d, m=%d, n=%d, dim=%d" % (u.shape[0], u.shape[1], v.shape[1], v.shape[2])        
-        v_proj = F.relu(self.W_v(v))
-        v_mask = output_mask(v_lens).unsqueeze(2)
+        v_proj = F.relu(self.W_v(v))        
+        v_mask = output_mask(v_lens, maxlen=v_proj.shape[1]).unsqueeze(2)
         
         #v_proj = v_proj * v_mask
 
@@ -97,7 +97,7 @@ class SelfAligner(nn.Module):
         self.W_u = nn.Linear(enc_dim, enc_dim, bias=False) # enc_dim x n
 
     def forward(self, x, x_lens, prev=None):
-        x_mask = output_mask(x_lens).unsqueeze(2)
+        x_mask = output_mask(x_lens, maxlen=x.shape[1]).unsqueeze(2)
         #x = x * x_mask
         x_proj = F.relu(self.W_u(x))
         
@@ -119,7 +119,7 @@ class Summarizer(nn.Module):
 
     def forward(self, v, v_lens):
         alpha = self.W(v)
-        v_mask = output_mask(v_lens).unsqueeze(2)       
+        v_mask = output_mask(v_lens, maxlen=v.shape[1]).unsqueeze(2)       
         alpha = masked_softmax(alpha, v_mask, 1)
         #print "alpha.shape=",alpha.shape
 
@@ -208,9 +208,9 @@ class AligningBlock(nn.Module):
         _,rev_sorted_idxs = torch.sort(sorted_idxs)
         Z = Z[sorted_idxs]
         
-        Z = self.dropout(Z)
+        dropped_Z = self.dropout(Z)
 
-        packed_Z = rnn.pack_padded_sequence(Z, z_lens, batch_first=True)
+        packed_Z = rnn.pack_padded_sequence(dropped_Z, z_lens, batch_first=True)
         R, _ = self.evidence_collector(packed_Z)        
         R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)
 

@@ -6,43 +6,72 @@ import numpy as np
 from ReadingComprehension.IterativeReattentionAligner.modules import IterativeAligner
 from ReadingComprehension.IterativeReattentionAligner.loss import DCRLLoss
 from ReadingComprehension.IterativeReattentionAligner.decoder import Decoder
+from utils.utils import output_mask
+
+class GaussianKernel(object):
+    """docstring for GaussianKernel"""
+    def __init__(self, mean, std):
+        super(GaussianKernel, self).__init__()
+        self.mean = mean
+        self.std = std
+
+    def __call__(self, x):
+        sim = torch.exp(-0.5 * (x-self.mean)**2 / self.std**2)      
+        return sim
+
+class WordOverlapLoss(nn.Module):
+    """docstring for StringOverlapLoss"""
+    def __init__(self):
+        super(WordOverlapLoss, self).__init__()
+        self.G = GaussianKernel(1.0, 0.0001)
+
+    def forward(self, s1, s2, s1_len, s2_len):
+        # s1.shape = (batch, seq_len, emb_dim)
+        # s1 should be the true answer
+
+        normed_s1 = s1 / torch.norm(s1, dim=2, keepdim=True)
+        normed_s2 = s2 / torch.norm(s2, dim=2, keepdim=True)
+
+        cosine = torch.bmm(normed_s1, normed_s2.transpose(1,2)) # (batch, len(s1), len(s2))
+        cosine_em = self.G(cosine)
+        cosine_sm = cosine_em/(torch.sum(cosine_em, dim=2, keepdim=True) + 1e-10)
+        cosine_scaled = cosine_em * cosine_sm
+
+        mask = output_mask(s1_len)
+        max_match = torch.sum(cosine_scaled, dim=2)
+
+        max_match = max_match * mask
+        tot_match = torch.sum(max_match, dim=1)
+        ovrl = tot_match/s1_len.float()
+
+        loss = 1 - ovrl
+        return loss
 
 class MnemicReader(nn.Module):
     ## model(c_vec, c_pos, c_ner, c_em, c_mask, q_vec, q_pos, q_ner, q_em, q_mask, start, end)
-    def __init__(self, input_size, hidden_size, num_layers, char_emb_dim, 
-                    pos_emb_dim, ner_emb_dim, word_embeddings, num_char, 
-                    num_pos, num_ner, vocab_size, emb_dropout=0.0, rnn_dropout=0.0):
+    def __init__(self, input_size, hidden_size, num_layers, pos_emb_dim, word_embeddings,
+                    num_pos, vocab_size, emb_dropout=0.0, rnn_dropout=0.0):
         super(MnemicReader, self).__init__()
         self.num_layers = num_layers
-        self.rnn = nn.ModuleList()            
+        self.rnn = nn.ModuleList()
 
-        self.char_emb = nn.Sequential(
-            nn.Embedding(num_char, char_emb_dim, padding_idx=0),
-            nn.Dropout(emb_dropout)
-            )
         self.pos_emb = nn.Sequential(
             nn.Embedding(num_pos, pos_emb_dim, padding_idx=0),
-            nn.Dropout(emb_dropout)
-            )
-        self.ner_emb = nn.Sequential(
-            nn.Embedding(num_ner, ner_emb_dim, padding_idx=0),
             nn.Dropout(emb_dropout)
             )
         self.vocab_size = vocab_size
         self.emb_size = word_embeddings.shape[1]
         self.word_embeddings = torch.nn.Embedding(word_embeddings.shape[0], word_embeddings.shape[1], 
                                                     padding_idx=0)
-        self.word_embeddings.weight.data.copy_(torch.from_numpy(word_embeddings))
+        self.word_embeddings.weight.data.copy_(word_embeddings)
         self.word_embeddings = nn.Sequential(
             self.word_embeddings,
             nn.Dropout(emb_dropout)
             )
-        #self.answerPointerModel = answerPointerModel()
-
-        self.char_lstm = nn.LSTM(char_emb_dim, char_emb_dim, num_layers=1, bidirectional=True)
+        #self.answerPointerModel = answerPointerModel()    
         self.aligningBlock = IterativeAligner( 2 * hidden_size, hidden_size, 1, 3, dropout=rnn_dropout)
 
-        self.loss = nn.NLLLoss()
+        self.loss = WordOverlapLoss()
         self.DCRL_loss = DCRLLoss(4)
         #self.weight_a = torch.pow(torch.randn(1, requires_grad=True), 2)
         #self.weight_b = torch.pow(torch.randn(1, requires_grad=True), 2)
@@ -94,24 +123,15 @@ class MnemicReader(nn.Module):
 
         return con_char
 
-    def getAnswerSpanProbs(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask):
+    def getAnswerSpanProbs(self, c_vec, c_pos, c_mask, q_vec, q_pos, q_mask):
         con_vec = self.word_embeddings(c_vec)
-        con_pos = self.pos_emb(c_pos)
-        con_ner = self.ner_emb(c_ner) 
-
-        
-        con_char = self.char_lstm_forward(c_char, c_char_lens)
-        con_char *= c_mask.unsqueeze(2).float()        
+        con_pos = self.pos_emb(c_pos)     
 
         que_vec = self.word_embeddings(q_vec)
         que_pos = self.pos_emb(q_pos)
-        que_ner = self.ner_emb(q_ner)
 
-        que_char = self.char_lstm_forward(q_char, q_char_lens)
-        que_char *= q_mask.unsqueeze(2).float()
-
-        con_input = torch.cat([con_vec, con_char, con_pos, con_ner, c_em.unsqueeze(2)], 2)
-        que_input = torch.cat([que_vec, que_char, que_pos, que_ner, q_em.unsqueeze(2)], 2)
+        con_input = torch.cat([con_vec, con_pos], 2)
+        que_input = torch.cat([que_vec, que_pos], 2)
         x1 = con_input.transpose(0, 1)
         # x1_len, x1_sorted_idx = torch.sort(torch.sum(c_mask, dim=1), descending=True)
         # _, x1_rev_sorted_idx = torch.sort(x1_sorted_idx)
@@ -151,11 +171,9 @@ class MnemicReader(nn.Module):
         
         return s_prob, e_prob, probs, final_context
 
-    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, context, a1, a2, a_vec):
-        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
-                                                                        c_em, c_char_lens, c_mask, q_vec, 
-                                                                        q_pos, q_ner, q_char, q_em, 
-                                                                        q_char_lens, q_mask)
+    def forward(self, c_vec, c_pos, c_mask, q_vec, q_pos, q_mask, context, a_vec, alen):
+        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos,c_mask, 
+                                                                        q_vec, q_pos, q_mask)
         #print (s_prob.shape, e_prob.shape)
         #print (start, end)
         #print (torch.gather(s_prob.squeeze(), 1, start.unsqueeze(1)))
@@ -164,23 +182,27 @@ class MnemicReader(nn.Module):
         #print (end)
         #s_prob = torch.log(s_prob)
         #e_prob = torch.log(e_prob)
-        s_prob = torch.squeeze(s_prob)
-        e_prob = torch.squeeze(e_prob)
-        #s_prob = torch.log(s_prob)
-        #e_prob = torch.log(e_prob)
-        loss1 = self.loss(torch.log(s_prob), start)
-        loss2 = self.loss(torch.log(e_prob), end)
-        loss = loss1 + loss2
-
         context_len = s_prob.shape[1]
-        #loss = self.loss(probs, start*context_len + end)
-        
         max_idx = torch.argmax(probs, dim=1)
-        s_index = max_idx // context_len
-        e_index = max_idx % context_len
+        start = max_idx // context_len
+        end = max_idx % context_len
+
+        pred_a = [c_vec[i, start[i]:end[i]] for i in range(len(start))]
+        
+        pred_a_len = [len(a) for a in pred_a]
+        padded_pred_a = torch.zeros(len(pred_a), max(pred_a_len), 
+                                    dtype=c_vec.dtype).to(c_vec.device)
+        for (i,x) in enumerate(pred_a):
+            padded_pred_a[i,:pred_a_len[i]] = x
+            
+        pred_a_emb = self.word_embeddings(padded_pred_a)
+        a_emb = self.word_embeddings(a_vec)
+
+        loss = self.loss(a_emb, pred_a_emb, alen, start-end)
+        loss = torch.mean(loss)
 
         if not self.use_RLLoss:
-            return loss, loss, s_index, e_index
+            return loss, loss, start, end
 
         #return loss
         #s_prob = torch.exp(s_prob)
@@ -230,44 +252,75 @@ class MnemicReader(nn.Module):
         return s_index, e_index, torch.log(s_prob), torch.log(e_prob)
 
 if __name__ == '__main__':
-    seq_len = 60
-    seq_len2 = 40
-    batch = 2
+    loss = WordOverlapLoss()
+    s1 = torch.tensor([
+            [
+                [1, 2],
+                [3, 4],
+                [7, 8],
+                [9, 0],
+            ],
+            [
+                [1, 2],
+                [3, 4],
+                [5, 6],
+                [5, 6],
+            ]
+        ])
 
-    input_size = 100
-    vocab_size = 200
+    s2 = torch.tensor([
+            [
+                [0, 2],
+                [3, 4.09],
+                [5, 6],
+                [5, 6],
+            ],
+            [
+                [1, 2],
+                [3, 4],
+                [5, 6],
+                [5, 6],
+            ]
+        ])
+    print(loss(s1.float(), s2.float(), torch.tensor([4,2]), torch.tensor([2,2])))
+    # seq_len = 60
+    # seq_len2 = 40
+    # batch = 2
 
-    char_embedding_dim = 300
-    word_embedding_dim = 100
+    # input_size = 100
+    # vocab_size = 200
 
-    char_hidden_size = 200
-    encoder_hidden_size = 200
+    # char_embedding_dim = 300
+    # word_embedding_dim = 100
 
-    encoder_input_dim = word_embedding_dim + (2 * char_embedding_dim) 
+    # char_hidden_size = 200
+    # encoder_hidden_size = 200
 
-    word_embeddings = np.random.uniform(-0.25, 0.25, (vocab_size, word_embedding_dim))
-    char_embeddings = np.random.uniform(-0.25, 0.25, (vocab_size, char_embedding_dim))
+    # encoder_input_dim = word_embedding_dim + (2 * char_embedding_dim) 
+
+    # word_embeddings = np.random.uniform(-0.25, 0.25, (vocab_size, word_embedding_dim))
+    # char_embeddings = np.random.uniform(-0.25, 0.25, (vocab_size, char_embedding_dim))
    
-    encoder_input_dim = 64 + 64 + word_embedding_dim + (2*10) + 1
-              #pos_emb_dim + ner_emb_dim + word_embeddings.shape[1] + (2*hidden_size) + 1
+    # encoder_input_dim = 64 + 64 + word_embedding_dim + (2*10) + 1
+    #           #pos_emb_dim + ner_emb_dim + word_embeddings.shape[1] + (2*hidden_size) + 1
  
-    mnemonicReader = MnemicReader(input_size=encoder_input_dim, hidden_size=10, num_layers=1, char_emb_dim =64, \
-            pos_emb_dim=64, ner_emb_dim=64, word_embeddings=word_embeddings, num_char=40, num_pos=40, num_ner=40)
+    # mnemonicReader = MnemicReader(input_size=encoder_input_dim, hidden_size=10, num_layers=1, char_emb_dim =64, \
+    #         pos_emb_dim=64, ner_emb_dim=64, word_embeddings=word_embeddings, num_char=40, num_pos=40, num_ner=40)
 
-    c_vec = torch.Tensor(np.random.randint(40, size=(batch, seq_len))).long()
-    c_pos = torch.Tensor(np.random.randint(40, size=(batch, seq_len))).long()
-    c_ner = torch.Tensor(np.random.randint(40, size=(batch, seq_len))).long()
-    c_em = torch.Tensor(np.random.randint(2, size=(batch, seq_len))).float()
+    # c_vec = torch.Tensor(np.random.randint(40, size=(batch, seq_len))).long()
+    # c_pos = torch.Tensor(np.random.randint(40, size=(batch, seq_len))).long()
+    # c_ner = torch.Tensor(np.random.randint(40, size=(batch, seq_len))).long()
+    # c_em = torch.Tensor(np.random.randint(2, size=(batch, seq_len))).float()
 
-    c_char = torch.Tensor(np.random.randint(40, size=(batch, seq_len, 10))).long()
-    c_mask = torch.Tensor(np.random.randint(40, size=(batch, seq_len))).long()
+    # c_char = torch.Tensor(np.random.randint(40, size=(batch, seq_len, 10))).long()
+    # c_mask = torch.Tensor(np.random.randint(40, size=(batch, seq_len))).long()
     
-    q_vec = torch.Tensor(np.random.randint(40, size=(batch, seq_len2))).long()
-    q_pos = torch.Tensor(np.random.randint(40, size=(batch, seq_len2))).long()
-    q_ner = torch.Tensor(np.random.randint(40, size=(batch, seq_len2))).long()
-    q_em = torch.Tensor(np.random.randint(2, size=(batch, seq_len2))).float()
+    # q_vec = torch.Tensor(np.random.randint(40, size=(batch, seq_len2))).long()
+    # q_pos = torch.Tensor(np.random.randint(40, size=(batch, seq_len2))).long()
+    # q_ner = torch.Tensor(np.random.randint(40, size=(batch, seq_len2))).long()
+    # q_em = torch.Tensor(np.random.randint(2, size=(batch, seq_len2))).float()
 
-    q_char = torch.Tensor(np.random.randint(40, size=(batch, seq_len2, 10))).long()
-    q_mask = torch.Tensor(np.random.randint(40, size=(batch, seq_len2))).long()
+    # q_char = torch.Tensor(np.random.randint(40, size=(batch, seq_len2, 10))).long()
+    # q_mask = torch.Tensor(np.random.randint(40, size=(batch, seq_len2))).long()
 
-    mnemonicReader(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start=0, end=4)
+    # mnemonicReader(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask, start=0, end=4)
