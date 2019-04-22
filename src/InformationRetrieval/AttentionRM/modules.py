@@ -1,11 +1,8 @@
-import sys
-sys.path.append('/home/mshah1/narrativeQA/NN4NLP-Project/src')
 import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
-from utils.utils import *
-from IterativeReattentionAligner.modules import (InteractiveAligner, 
+from ReadingComprehension.IterativeReattentionAligner.modules import (InteractiveAligner, 
 													SelfAligner, 
 													Summarizer, 
 													AnswerPointer)
@@ -38,47 +35,72 @@ class AttentionRM(nn.Module):
 		self.evidence_collector = nn.Sequential(
 			nn.Conv1d(emb_dim, emb_dim, 5, padding=2),
 			nn.Tanh(),
-			nn.Dropout(dropout),
+			nn.Dropout(dropout, inplace=True),
 			nn.Conv1d(emb_dim, emb_dim, 3, padding=1),
-			nn.Dropout(dropout),
+			nn.Dropout(dropout, inplace=True),
 			)	
 
 		self.mlp1 = nn.Sequential(
                         nn.Linear(4*emb_dim, emb_dim, bias=False),
                         nn.Tanh(),
-                        nn.Dropout(dropout),
+                        nn.Dropout(dropout, inplace=True),
                         nn.Linear(emb_dim, 1, bias=False)
                     )
 
 		self.interactive_aligner = InteractiveAligner(emb_dim)
 		self.self_aligner = SelfAligner(emb_dim)
 		self.summarizer = Summarizer(emb_dim)
-		self.emb_dropout = nn.Dropout(dropout)
+		self.emb_dropout = nn.Dropout(dropout, inplace=True)
+		
 	def forward(self, q, d, qlen, dlen):
-		q_emb = self.emb_dropout(self.emb(q))
+		print('d size:',d.nelement() * d.storage().element_size()/(1024**3))
+		print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
+		qw_emb = self.emb_dropout(self.emb(q[:,:,0]))
+		qp_emb = self.emb_dropout(self.pos_emb(q[:,:,1]))
+		q_emb = self.emb_proj(torch.cat((qw_emb, qp_emb), dim=2))
+		del qw_emb, qp_emb
+
 		dw_emb = self.emb_dropout(self.emb(d[:,:,0]))
+		print('dw_emb size:',dw_emb.storage().size() * dw_emb.storage().element_size()/(1024**3))
+		print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
 		dp_emb = self.emb_dropout(self.pos_emb(d[:,:,1]))
-		# print(d.shape, dw_emb.shape, dp_emb.shape)
-		d_emb = self.emb_proj(torch.cat((dw_emb, dp_emb), dim=2))
+		print('dp_emb size:',dp_emb.storage().size() * dp_emb.storage().element_size()/(1024**3))
+		print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)			
+		
+		d_emb = self.emb_proj(torch.cat((dw_emb, dp_emb), dim=2))		
+		del dw_emb, dp_emb		
+
+		print('d_emb size:',d_emb.storage().size() * d_emb.storage().element_size()/(1024**3))
+		print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
+
 		d_emb = self.emb_dropout(d_emb)
+		print('d_emb size:',d_emb.storage().size() * d_emb.storage().element_size()/(1024**3))
+		print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
 
 		qng, qng_len, _ = self.interactive_aligner(d_emb, q_emb,
 												dlen, qlen)
+		del d_emb
+		print('qng size:',qng.storage().size() * qng.storage().element_size())
+		print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
 
-		attendedD, attendedD_len, B = self.self_aligner(qng, qng_len)
-
+		attendedD, attendedD_len, _ = self.self_aligner(qng, qng_len)
+		print('attendedD size:',attendedD.storage().size() * attendedD.storage().element_size()/(1024**3))
+		print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
+		del qng
 		# with torch.no_grad():
 		# 	for i in range(len(attendedD_len)):
 		# 		attendedD[i, attendedD_len[i]:,:] = 0
 
 		encoded = self.evidence_collector(attendedD.transpose(1,2))
-
+		print('encoded size:',encoded.storage().size() * encoded.storage().element_size()/(1024**3))
+		print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
 		# encoded = torch.mean(encoded, dim=2)
 		encoded = encoded.transpose(1,2)		
 		s = self.summarizer(q_emb, qlen)
 		s = s.expand(s.shape[0], encoded.shape[1], s.shape[2])	
 
 		catted = torch.cat((encoded, s, encoded*s, encoded-s), dim=2)
+		del encoded
 		# with torch.no_grad():
 		# 	for i in range(len(attendedD_len)):
 		# 		catted[i, attendedD_len[i]:,:] = 0

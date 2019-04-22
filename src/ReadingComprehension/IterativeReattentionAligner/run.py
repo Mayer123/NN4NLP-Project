@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/home/kaixinm/NN4NLP-Project/src')
+#sys.path.append('../../')
 import json
 from collections import defaultdict, Counter
 import numpy as np
@@ -11,15 +11,17 @@ import time
 from rouge import Rouge
 import argparse
 import logging
-from encoder import MnemicReader
+from ReadingComprehension.IterativeReattentionAligner.CSMrouge import RRRouge
+from ReadingComprehension.IterativeReattentionAligner.bleu import Bleu
+from ReadingComprehension.IterativeReattentionAligner.encoder import MnemicReader
+from ReadingComprehension.IterativeReattentionAligner.e2e_encoder import MnemicReader as e2e_MnemicReader
 import cProfile, pstats, io
-from utils import *
+from ReadingComprehension.IterativeReattentionAligner.utils import *
 from InformationRetrieval.AttentionRM.modules import AttentionRM
+from EndToEndModel.modules import EndToEndModel
 from nltk.translate.bleu_score import sentence_bleu
 import re
 import pickle
-from CSMrouge import RRRouge
-from bleu import Bleu
 
 stoplist = set(['.',',', '...', '..'])
 bleu_obj = Bleu(4)
@@ -114,7 +116,7 @@ def train_full(args):
     logger.addHandler(fh)
 
     logger.info('-' * 100)
-    logger.info('Loading data')
+    logger.info('Loading fulltext data')
     with open(args.train_file, 'rb') as f:
         training_data = pickle.load(f)
     with open(args.dev_file, 'rb') as f:
@@ -135,15 +137,25 @@ def train_full(args):
     dev_loader = torch.utils.data.DataLoader(dev, batch_size=1, num_workers=4, collate_fn=mCollateFn)
     logger.info('Generating embeddings')
     embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
-    embeddings = torch.from_numpy(embeddings)
+    embeddings = torch.from_numpy(embeddings).float()
+
+    input_size = embeddings.shape[1] + args.pos_emb_size
+
     use_cuda = torch.cuda.is_available()
 
-    model = AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i))
+    ir_model = AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i))
+    rc_model = e2e_MnemicReader(input_size, args.hidden_size, args.num_layers,
+                            args.pos_emb_size, embeddings, len(tag2i)+2, len(w2i)+4,
+                            args.emb_dropout, args.rnn_dropout)
+    model = EndToEndModel(ir_model, rc_model)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
                                                             factor=0.5, patience=0,
                                                             verbose=True)
     if use_cuda:
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.enable = True
         torch.cuda.manual_seed(args.seed)
         model = model.cuda()
 
@@ -161,7 +173,7 @@ def train_full(args):
             global_step += 1
             #print (global_step)
             q, passage, a, qlens, slens, alens, a1, a2 = batch
-            print(q.shape, passage.shape, a.shape, qlens.shape, slens.shape, alens.shape)
+            # print(q.dtype, passage.dtype, a.dtype, qlens.dtype, slens.dtype, alens.dtype)
             if use_cuda:
                 q = q.cuda()
                 passage = passage.cuda()
@@ -170,13 +182,15 @@ def train_full(args):
                 slens = slens.cuda()
                 alens = alens.cuda()
             
-            batch_loss = model(q, passage, qlens, slens)
-            train_loss += batch_loss.cpu().item()
+            batch_loss = model(q, passage, a, qlens, slens, alens)
             optimizer.zero_grad()
             batch_loss.backward()
+            
+            train_loss += float(batch_loss)
             #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
             optimizer.step()
-            reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
+
+            reset_embeddings(rc_model.word_embeddings[0], embeddings, trained_idx)
             # if global_step % 100 == 0:
             #     logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
         logger.info("iter %r global_step %s : train loss/batch=%.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), time.time() - start_time))

@@ -92,18 +92,21 @@ def mCollateFn(batch):
     max_s_len = torch.max(slens)
     max_a_len = torch.max(alens)
 
-    Qtensor = torch.zeros(len(batch), max_q_len)
-    Ptensor = torch.zeros(len(Passages), max_s_len)
-    Atensor = torch.zeros(len(batch), max_a_len)
-    Ptagtensor = torch.zeros(len(Passages), max_s_len)
+    Qtensor = torch.zeros(len(batch), max_q_len).long()
+    Qtagtensor = torch.zeros(len(batch), max_q_len).long()
+    Ptensor = torch.zeros(len(Passages), max_s_len).long()
+    Ptagtensor = torch.zeros(len(Passages), max_s_len).long()
+    Atensor = torch.zeros(len(batch), max_a_len).long()    
     for i in range(len(batch)):
         Qtensor[i, :qlens[i]] = torch.tensor(Qwords[i])
+        Qtagtensor[i, :qlens[i]] = torch.tensor(Qtags[i])
         Atensor[i, :alens[i]] = torch.tensor(A1[i])
         if i == 0:
             for j in range(len(Passages)):
                 Ptensor[j,:slens[j]] = torch.tensor(Passages[j])
                 Ptagtensor[j,:slens[j]] = torch.tensor(Passagestags[j])
     Ptensor = torch.cat([Ptensor.unsqueeze(2), Ptagtensor.unsqueeze(2)], dim=2)
+    Qtensor = torch.cat([Qtensor.unsqueeze(2), Qtagtensor.unsqueeze(2)], dim=2)
     return Qtensor, Ptensor, Atensor, qlens, slens, alens, A1, A2
 
 def convert_fulltext(data, w2i, tag2i, ner2i, c2i, update_dict=True):   
@@ -194,9 +197,9 @@ def build_dicts(data):
     for k,v in common_vocab.items():
         assert v == word_dict[k]
     # 0 for padding and 1 for unk
-    for d in ['word_dict', 'tag_dict', 'ner_dict', 'char_dict', 'common_vocab']:
-        with open('../../prepro/dicts/%s.json'%d, 'w') as f:
-            json.dump(locals()[d], f)
+    # for d in ['word_dict', 'tag_dict', 'ner_dict', 'char_dict', 'common_vocab']:
+    #     with open('../../prepro/dicts/%s.json'%d, 'w') as f:
+    #         json.dump(locals()[d], f)
 
     return word_dict, tag_dict, ner_dict, char_dict, common_vocab
 

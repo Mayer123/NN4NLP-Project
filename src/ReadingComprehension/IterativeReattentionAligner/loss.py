@@ -2,9 +2,7 @@ import torch
 from torch import nn
 from rouge import Rouge
 import numpy as np
-stoplist = set(['.',',', '...', '..'])
-
-from CSMrouge import RRRouge
+from ReadingComprehension.IterativeReattentionAligner.CSMrouge import RRRouge
 stoplist = set(['.',',', '...', '..'])
 
 def get_reward(pred_start, pred_end, start, end, context, a1, a2):

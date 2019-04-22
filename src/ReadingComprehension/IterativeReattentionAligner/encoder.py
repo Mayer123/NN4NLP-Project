@@ -3,9 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
-from modules import IterativeAligner
-from loss import DCRLLoss
-from decoder import Decoder
+from ReadingComprehension.IterativeReattentionAligner.modules import IterativeAligner
+from ReadingComprehension.IterativeReattentionAligner.loss import DCRLLoss
+from ReadingComprehension.IterativeReattentionAligner.decoder import Decoder
 
 class MnemicReader(nn.Module):
     ## model(c_vec, c_pos, c_ner, c_em, c_mask, q_vec, q_pos, q_ner, q_em, q_mask, start, end)
@@ -43,7 +43,7 @@ class MnemicReader(nn.Module):
         self.aligningBlock = IterativeAligner( 2 * hidden_size, hidden_size, 1, 3, dropout=rnn_dropout)
 
         self.loss = nn.NLLLoss()
-        self.DCRL_loss = DCRLLoss(6)
+        self.DCRL_loss = DCRLLoss(4)
         #self.weight_a = torch.pow(torch.randn(1, requires_grad=True), 2)
         #self.weight_b = torch.pow(torch.randn(1, requires_grad=True), 2)
         self.weight_a = torch.randn(1, requires_grad=True)
@@ -105,7 +105,7 @@ class MnemicReader(nn.Module):
 
         que_vec = self.word_embeddings(q_vec)
         que_pos = self.pos_emb(q_pos)
-        que_ner = self.ner_emb(q_ner)        
+        que_ner = self.ner_emb(q_ner)
 
         que_char = self.char_lstm_forward(q_char, q_char_lens)
         que_char *= q_mask.unsqueeze(2).float()
@@ -113,36 +113,40 @@ class MnemicReader(nn.Module):
         con_input = torch.cat([con_vec, con_char, con_pos, con_ner, c_em.unsqueeze(2)], 2)
         que_input = torch.cat([que_vec, que_char, que_pos, que_ner, q_em.unsqueeze(2)], 2)
         x1 = con_input.transpose(0, 1)
-        x1_len, x1_sorted_idx = torch.sort(torch.sum(c_mask, dim=1), descending=True)
-        _, x1_rev_sorted_idx = torch.sort(x1_sorted_idx)
-        packed_x1 = nn.utils.rnn.pack_padded_sequence(x1[:,x1_sorted_idx,:], x1_len)
+        # x1_len, x1_sorted_idx = torch.sort(torch.sum(c_mask, dim=1), descending=True)
+        # _, x1_rev_sorted_idx = torch.sort(x1_sorted_idx)
+        # packed_x1 = nn.utils.rnn.pack_padded_sequence(x1[:,x1_sorted_idx,:], x1_len)
 
         x2 = que_input.transpose(0, 1)
-        x2_len, x2_sorted_idx = torch.sort(torch.sum(q_mask, dim=1), descending=True)
-        _, x2_rev_sorted_idx = torch.sort(x2_sorted_idx)
-        packed_x2 = nn.utils.rnn.pack_padded_sequence(x2[:,x2_sorted_idx,:], x2_len)
+        # x2_len, x2_sorted_idx = torch.sort(torch.sum(q_mask, dim=1), descending=True)
+        # _, x2_rev_sorted_idx = torch.sort(x2_sorted_idx)
+        # packed_x2 = nn.utils.rnn.pack_padded_sequence(x2[:,x2_sorted_idx,:], x2_len)
         
 
         enc_con = []
         enc_que = []
         for i in range(self.num_layers):
-            packed_x1 = self.rnn[i](packed_x1)[0]
-            x1, x1_len = nn.utils.rnn.pad_packed_sequence(packed_x1)
-            x1 = self.rnn_dropout(x1)            
-            enc_con.append(x1[:,x1_rev_sorted_idx,:])            
+            x1 = self.rnn[i](x1)[0]
+            # packed_x1 = self.rnn[i](packed_x1)[0]
+            # x1, x1_len = nn.utils.rnn.pad_packed_sequence(packed_x1)
+            x1 = self.rnn_dropout(x1)      
+            enc_con.append(x1)      
+            # enc_con.append(x1[:,x1_rev_sorted_idx,:])            
 
-            packed_x2 = self.rnn[i](packed_x2)[0]            
-            x2, x2_len = nn.utils.rnn.pad_packed_sequence(packed_x2)
-            x2 = self.rnn_dropout(x2)            
-            enc_que.append(x2[:,x2_rev_sorted_idx,:])
+            x2 = self.rnn[i](x2)[0]
+            # packed_x2 = self.rnn[i](packed_x2)[0]
+            # x2, x2_len = nn.utils.rnn.pad_packed_sequence(packed_x2)
+            x2 = self.rnn_dropout(x2)
+            enc_que.append(x2)
+            # enc_que.append(x2[:,x2_rev_sorted_idx,:])
             
-            if i < self.num_layers -1:
-                packed_x1 = nn.utils.rnn.pack_padded_sequence(x1, x1_len)
-                packed_x2 = nn.utils.rnn.pack_padded_sequence(x2, x2_len)
+            # if i < self.num_layers -1:
+            #     packed_x1 = nn.utils.rnn.pack_padded_sequence(x1, x1_len)
+            #     packed_x2 = nn.utils.rnn.pack_padded_sequence(x2, x2_len)
 
         enc_con = torch.cat(enc_con, 2).transpose(0, 1) # (batch_size, seq_len, enc_con_dim)
         enc_que = torch.cat(enc_que, 2).transpose(0, 1) # (batch_size, seq_len, enc_que_dim)            
-
+        # print(enc_con.shape, enc_que.shape)
         s_prob, e_prob, probs, final_context = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
         
         return s_prob, e_prob, probs, final_context
