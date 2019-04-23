@@ -48,103 +48,6 @@ def add_arguments(parser):
     parser.add_argument('--RL_loss_after', type=int, default=5, help='path to the log file')
     parser.add_argument('--mode', type=str, default='summary', help='path to the log file')
 
-def build_dicts(data):    
-    w2i = Counter()
-    tag2i = Counter()
-    ner2i = Counter()
-    c2i = Counter()
-    for i, sample in enumerate(data):
-        for w in sample['context_tokens']:
-            w2i[w] += 1
-            for c in w:
-                c2i[c] += 1
-        for t in sample['context_pos']:
-            tag2i[t] += 1
-        for e in sample['context_ner']:
-            ner2i[e] += 1
-        for w in sample['question_tokens']:
-            w2i[w] += 1
-            for c in w:
-                c2i[c] += 1
-        for t in sample['question_pos']:
-            tag2i[t] += 1
-        for e in sample['question_ner']:
-            ner2i[e] += 1
-    word_dict = {}
-    tag_dict = {}
-    ner_dict = {}
-    char_dict = {}
-    common_vocab = {}
-    for i, (k, v) in enumerate(w2i.most_common()):
-        if v >= 31:
-            common_vocab[k] = i + 4                         # <SOS> for 2 <EOS> for 3
-    for i, (k, v) in enumerate(w2i.most_common()):
-        word_dict[k] = i + 4                         # <SOS> for 2 <EOS> for 3
-    for i, (k, v) in enumerate(tag2i.most_common()):
-        tag_dict[k] = i + 2
-    for i, (k, v) in enumerate(ner2i.most_common()):
-        ner_dict[k] = i + 2
-    for i, (k, v) in enumerate(c2i.most_common()):
-        char_dict[k] = i + 2
-    count = 0
-    count1 = 0
-    for sample in data:
-        for w in sample['answers'][0].lower():
-            count += 1
-            if w in common_vocab:
-                count1 += 1
-        for w in sample['answers'][1].lower():
-            count += 1
-            if w in common_vocab:
-                count1 += 1
-    print (count)
-    print (count1)
-    return word_dict, tag_dict, ner_dict, char_dict, common_vocab
-
-def convert_data(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=-1):
-    for i, sample in enumerate(data):
-        context_vector = [w2i[w] if w in w2i else 1 for w in sample['context_tokens']]
-        context_pos_vec = [tag2i[t] if t in tag2i else 1 for t in sample['context_pos']]
-        context_ner_vec = [ner2i[e] if e in ner2i else 1 for e in sample['context_ner']]
-        context_character = [[c2i[c] if c in c2i else 1 for c in w] for w in sample['context_tokens']]
-        question_vector = [w2i[w] if w in w2i else 1 for w in sample['question_tokens']]
-        question_pos_vec = [tag2i[t] if t in tag2i else 1 for t in sample['question_pos']]
-        question_ner_vec = [ner2i[e] if e in ner2i else 1 for e in sample['question_ner']]
-        question_character = [[c2i[c] if c in c2i else 1 for c in w] for w in sample['question_tokens']]
-        context_em = sample['context_em_feature']
-        context_tokens = sample['context_tokens']
-        answer1 = sample['answers'][0].lower()
-        answer2 = sample['answers'][1].lower()
-        answer_tokens = word_tokenize(answer1) if random.random() < 0.5 else word_tokenize(answer2)
-        answer_vector = [2]+[common_vocab[w] if w in common_vocab else 1 for w in answer_tokens]+[3]
-        ans_start = sample['start_index']
-        ans_end = sample['end_index']
-        if max_len != -1 and len(context_vector) > max_len:
-            if sample['start_index'] >= max_len or sample['end_index'] >= max_len: 
-                new_start = len(context_vector) - max_len
-                if new_start > sample['start_index']:
-                    print('This context is too long')
-                    print (current_len)
-                context_vector = context_vector[new_start:new_start+max_len]
-                context_pos_vec = context_pos_vec[new_start:new_start+max_len]
-                context_ner_vec = context_ner_vec[new_start:new_start+max_len]
-                context_character = context_character[new_start:new_start+max_len]
-                context_em = context_em[new_start:new_start+max_len]
-                context_tokens = context_tokens[new_start:new_start+max_len]
-                ans_start = ans_start - new_start
-                ans_end = ans_end - new_start
-            else:
-                context_vector = context_vector[:max_len]
-                context_pos_vec = context_pos_vec[:max_len]
-                context_ner_vec = context_ner_vec[:max_len]
-                context_character = context_character[:max_len]
-                context_em = context_em[:max_len]
-                context_tokens = context_tokens[:max_len]
-        yield (context_vector, context_pos_vec, context_ner_vec, context_character, context_em, \
-            question_vector, question_pos_vec, question_ner_vec, question_character, sample['question_em_feature'], ans_start, ans_end, \
-            context_tokens, sample['question_tokens'], sample['chosen_answer'], answer1, answer2, sample['_id'], answer_vector)
-
-
 def generate_embeddings(filename, word_dict):
     embeddings = np.random.uniform(-0.25, 0.25, (len(word_dict)+4, 100))
     count = 0
@@ -159,39 +62,7 @@ def generate_embeddings(filename, word_dict):
                 embeddings[word_dict[tokens[0]]] = np.array(list(map(float, tokens[1:])))
                 count += 1
     
-    return embeddings, trained_idx
-
-def pad_sequence(sentences, pos, ner, char, em):
-    max_len = max([len(sent) for sent in sentences])
-    sent_batch = np.zeros((len(sentences), max_len), dtype=int)
-    pos_batch = np.zeros((len(sentences), max_len), dtype=int)
-    ner_batch = np.zeros((len(sentences), max_len), dtype=int)
-    char_batch = np.zeros((len(sentences), max_len, 16), dtype=int)
-    em_batch = np.zeros((len(sentences), max_len), dtype=int)
-    masks = np.zeros((len(sentences), max_len), dtype=int)
-    char_lens = np.ones((len(sentences), max_len), dtype=int)
-    for i, sent in enumerate(sentences):
-        sent_batch[i,:len(sent)] = np.array(sent)
-        pos_batch[i,:len(pos[i])] = np.array(pos[i])
-        ner_batch[i,:len(ner[i])] = np.array(ner[i])
-        em_batch[i,:len(em[i])] = np.array(em[i])
-        masks[i,:len(sent)] = 1
-        for j, word in enumerate(sent):
-            if len(char[i][j]) > 16:
-                char_batch[i, j, :16] = np.array(char[i][j][:16])
-                char_lens[i,j] = 16
-            else:
-                char_batch[i, j, :len(char[i][j])] = np.array(char[i][j])
-                char_lens[i,j] = len(char[i][j])
-    #print([len(sent) for sent in sentences])
-    return torch.as_tensor(sent_batch), torch.as_tensor(pos_batch), torch.as_tensor(ner_batch), torch.as_tensor(em_batch), torch.as_tensor(char_batch), torch.as_tensor(char_lens), torch.as_tensor(masks)
-
-def pad_answer(answers):
-    max_len = max([len(ans) for ans in answers])
-    ans_batch = np.zeros((len(answers), max_len), dtype=int)
-    for i, ans in enumerate(answers):
-        ans_batch[i, :len(ans)] = np.array(ans)
-    return torch.as_tensor(ans_batch)    
+    return embeddings, trained_idx   
 
 def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
     rouge_score = 0.0

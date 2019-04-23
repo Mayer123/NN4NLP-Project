@@ -8,7 +8,7 @@ from utils import utils
 
 class EndToEndModel(nn.Module):
 	"""docstring for End2EndModel"""
-	def __init__(self, ir_model, rc_model, n_ctx_sents=50):
+	def __init__(self, ir_model, rc_model, n_ctx_sents=3):
 		super(EndToEndModel, self).__init__()
 		self.ir_model = ir_model
 		self.rc_model = rc_model
@@ -45,9 +45,10 @@ class EndToEndModel(nn.Module):
 			q_ = q_.expand(c.shape[0], -1, -1)
 
 			qlen_ = qlen[i:i+1].expand(q_.shape[0])	
+			#c_scores = self.ir_model(q_, c, qlen_, clen)
 			with torch.no_grad():	
-				c_scores = self.getSentScores(q_, c, qlen_, clen, c_batch_size)
-			print(c_scores.shape)			
+				c_scores = self.ir_model(q_, c, qlen_, clen)
+			#print(c_scores.shape)			
 
 			_, topk_idx = torch.topk(c_scores, self.n_ctx_sents, dim=0)
 

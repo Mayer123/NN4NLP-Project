@@ -1,5 +1,5 @@
 import sys
-#sys.path.append('../../')
+sys.path.append('../../')
 import json
 from collections import defaultdict, Counter
 import numpy as np
@@ -16,7 +16,7 @@ from ReadingComprehension.IterativeReattentionAligner.bleu import Bleu
 from ReadingComprehension.IterativeReattentionAligner.encoder import MnemicReader
 from ReadingComprehension.IterativeReattentionAligner.e2e_encoder import MnemicReader as e2e_MnemicReader
 import cProfile, pstats, io
-from ReadingComprehension.IterativeReattentionAligner.utils import *
+from ReadingComprehension.IterativeReattentionAligner.data_utils import *
 from InformationRetrieval.AttentionRM.modules import AttentionRM
 from EndToEndModel.modules import EndToEndModel
 from nltk.translate.bleu_score import sentence_bleu
@@ -38,7 +38,7 @@ def add_arguments(parser):
     parser.add_argument('--hidden_size', type=int, default=100, help='Hidden size for LSTM')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of layers for LSTM')
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
-    parser.add_argument('--pos_emb_size', type=int, default=50, help='Embedding size for pos tags')
+    parser.add_argument('--pos_emb_size', type=int, default=20, help='Embedding size for pos tags')
     parser.add_argument('--ner_emb_size', type=int, default=50, help='Embedding size for ner')
     parser.add_argument('--emb_dropout', type=float, default=0.3, help='Dropout rate for embedding layers')
     parser.add_argument('--rnn_dropout', type=float, default=0.3, help='Dropout rate for RNN layers')
@@ -121,18 +121,16 @@ def train_full(args):
         training_data = pickle.load(f)
     with open(args.dev_file, 'rb') as f:
         dev_data = pickle.load(f)
-
     w2i = {'<pad>': 0,
             '<unk>' : 1}
     tag2i = w2i.copy()
     ner2i = w2i.copy()
     c2i = w2i.copy()
     logger.info('Converting to index')
-    train = convert_fulltext(training_data, w2i, tag2i, ner2i, c2i)
-    dev = convert_fulltext(dev_data, w2i, tag2i, ner2i, c2i, update_dict=False)
+    train = convert_fulltext(training_data, w2i, tag2i, ner2i, c2i, max_len=100, build_chunks=True)
+    dev = convert_fulltext(dev_data, w2i, tag2i, ner2i, c2i, update_dict=False, max_len=100, build_chunks=True)
     train = FulltextDataset(train, args.train_batch_size)
     dev = FulltextDataset(dev, args.dev_batch_size)
-    
     train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=1, num_workers=4, collate_fn=mCollateFn)
     dev_loader = torch.utils.data.DataLoader(dev, batch_size=1, num_workers=4, collate_fn=mCollateFn)
     logger.info('Generating embeddings')
@@ -142,11 +140,11 @@ def train_full(args):
     input_size = embeddings.shape[1] + args.pos_emb_size
 
     use_cuda = torch.cuda.is_available()
-
-    ir_model = AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i))
     rc_model = e2e_MnemicReader(input_size, args.hidden_size, args.num_layers,
                             args.pos_emb_size, embeddings, len(tag2i)+2, len(w2i)+4,
                             args.emb_dropout, args.rnn_dropout)
+    ir_model = AttentionRM(rc_model.word_embeddings, rc_model.pos_emb, pos_vocab_size=len(tag2i))
+    
     model = EndToEndModel(ir_model, rc_model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
