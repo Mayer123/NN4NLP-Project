@@ -1,3 +1,5 @@
+import sys
+sys.path.append('../')
 import json
 from collections import defaultdict, Counter
 import numpy as np
@@ -9,10 +11,10 @@ import time
 from rouge import Rouge
 import argparse
 import logging
-from languagemodel import Languagemodel
+from answer_generator import AnswerGenerator
 import re
-from CSMrouge import RRRouge
-from bleu import Bleu
+from ReadingComprehension.IterativeReattentionAligner.CSMrouge import RRRouge
+from ReadingComprehension.IterativeReattentionAligner.bleu import Bleu
 from allennlp.modules.elmo import batch_to_ids
 
 stoplist = set(['.',',', '...', '..'])
@@ -224,7 +226,7 @@ def main(args):
     use_cuda = torch.cuda.is_available()
     #use_cuda = False
     input_size = embeddings.shape[1]
-    model = Languagemodel(input_size, args.hidden_size, args.num_layers, embeddings, len(common_vocab)+4, args.emb_dropout, args.rnn_dropout)
+    model = AnswerGenerator(input_size, args.hidden_size, args.num_layers, embeddings, len(common_vocab)+4, args.emb_dropout, args.rnn_dropout)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max',
                                                             factor=0.5, patience=0,

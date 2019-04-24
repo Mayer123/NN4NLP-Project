@@ -93,15 +93,15 @@ class MnemicReader(nn.Module):
         # self.fc_in = nn.Linear(word_embeddings.shape[1], hidden_size*2)
 
     def prepare_decoder_input(self, s_index, e_index, context):
-        batch_size, seq_len, hidden_size = context.shape        
+        batch_size, seq_len = context.shape        
         cut = e_index - s_index
         max_len = torch.max(cut)
         max_len += 3
-        decoder_input = torch.zeros(batch_size, max_len, hidden_size).to(context.device)
+        decoder_input = torch.zeros(batch_size, max_len).to(context.device).long()
         for i in range(batch_size):
-            decoder_input[i,0,:] = self.word_embeddings(torch.Tensor([2]).long().to(context.device))
-            decoder_input[i,1:e_index[i]-s_index[i]+2,:] = context[i,s_index[i]:e_index[i]+1,:]
-            decoder_input[i,e_index[i]-s_index[i]+2,:] = self.word_embeddings(torch.Tensor([3]).long().to(context.device))
+            decoder_input[i,0] = torch.Tensor([2]).long().to(context.device)
+            decoder_input[i,1:e_index[i]-s_index[i]+2] = context[i,s_index[i]:e_index[i]+1]
+            decoder_input[i,e_index[i]-s_index[i]+2] = torch.Tensor([3]).long().to(context.device)
         return decoder_input
 
     def char_lstm_forward(self, char, char_lens):
@@ -193,18 +193,19 @@ class MnemicReader(nn.Module):
         
         pred_a_len = [len(a) for a in pred_a]
         padded_pred_a = torch.zeros(len(pred_a), max(pred_a_len), 
-                                    dtype=c_vec.dtype).to(c_vec.device)
+                                   dtype=c_vec.dtype).to(c_vec.device)
         for (i,x) in enumerate(pred_a):
-            padded_pred_a[i,:pred_a_len[i]] = x
+           padded_pred_a[i,:pred_a_len[i]] = x
             
         pred_a_emb = self.word_embeddings(padded_pred_a)
+        decoder_input = self.prepare_decoder_input(start, end, c_vec)
         a_emb = self.word_embeddings(a_vec)
 
         loss = self.loss(a_emb, pred_a_emb, alen, start-end)
         loss = torch.mean(loss)
 
         if not self.use_RLLoss:
-            return loss, loss, start, end
+            return loss, loss, start, end, decoder_input
 
         #return loss
         #s_prob = torch.exp(s_prob)
@@ -236,22 +237,21 @@ class MnemicReader(nn.Module):
         #total_loss = (loss1+loss2)*self.weight_a+rl_loss*self.weight_b
         return loss * a1 + rl_loss * a2 + b1 + b2, loss, s_index, e_index
 
-    def evaluate(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask):
-        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
-                                                                        c_em, c_char_lens, c_mask, q_vec, 
-                                                                        q_pos, q_ner, q_char, q_em, 
-                                                                        q_char_lens, q_mask)
+    def evaluate(self, c_vec, c_pos, c_mask, q_vec, q_pos, q_mask):
+        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_mask, q_vec, 
+                                                                        q_pos, q_mask)
 
-        s_prob = torch.squeeze(s_prob)
-        e_prob = torch.squeeze(e_prob)
+        #s_prob = torch.squeeze(s_prob)
+        #e_prob = torch.squeeze(e_prob)
 
         context_len = s_prob.shape[1]
         max_idx = torch.argmax(probs, dim=1)
         s_index = max_idx // context_len
         e_index = max_idx % context_len
+        decoder_input = self.prepare_decoder_input(s_index, e_index, c_vec)
         # decode_input = self.prepare_decoder_input(s_index, e_index, con_vec)
         # generate_output = self.generative_decoder.generate(decode_input)
-        return s_index, e_index, torch.log(s_prob), torch.log(e_prob)
+        return s_index, e_index, decoder_input
 
 if __name__ == '__main__':
     loss = WordOverlapLoss()

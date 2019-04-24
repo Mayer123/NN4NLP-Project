@@ -1,31 +1,36 @@
+import sys
+sys.path.append('../')
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
-from decoder import Decoder
+from ReadingComprehension.IterativeReattentionAligner.decoder import Decoder
 from allennlp.modules.elmo import Elmo, batch_to_ids
 
 options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
 weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
 
-class Languagemodel(nn.Module):
+class AnswerGenerator(nn.Module):
         ## model(c_vec, c_pos, c_ner, c_em, c_mask, q_vec, q_pos, q_ner, q_em, q_mask, start, end)
-        def __init__(self, input_size, hidden_size, num_layers, word_embeddings, vocab_size, emb_dropout=0.0, rnn_dropout=0.0):
-                super(Languagemodel, self).__init__()
+        def __init__(self, input_size, hidden_size, num_layers, word_embeddings, emb_size, vocab_size, full_vocab_size, emb_dropout=0.0, rnn_dropout=0.0):
+                super(AnswerGenerator, self).__init__()
                 self.num_layers = num_layers
                 self.rnn = nn.ModuleList()
 
                 self.vocab_size = vocab_size
-                self.emb_size = word_embeddings.shape[1]
-                self.word_embeddings = torch.nn.Embedding(word_embeddings.shape[0], word_embeddings.shape[1],
-                                                                                                        padding_idx=0)
-                self.full_vocab_size = word_embeddings.shape[0]
-                self.word_embeddings.weight.data.copy_(torch.from_numpy(word_embeddings))
-                self.word_embeddings = nn.Sequential(
-                        self.word_embeddings,
-                        nn.Dropout(emb_dropout)
-                        )
+                self.full_vocab_size = full_vocab_size
+                self.word_embeddings = word_embeddings
+                self.emb_size = emb_size
+                # self.emb_size = word_embeddings.shape[1]
+                # self.word_embeddings = torch.nn.Embedding(word_embeddings.shape[0], word_embeddings.shape[1],
+                #                                                                                         padding_idx=0)
+                # self.full_vocab_size = word_embeddings.shape[0]
+                # self.word_embeddings.weight.data.copy_(torch.from_numpy(word_embeddings))
+                # self.word_embeddings = nn.Sequential(
+                #         self.word_embeddings,
+                #         nn.Dropout(emb_dropout)
+                #         )
 
                 self.rnn_dropout = nn.Dropout(rnn_dropout)
 
@@ -38,6 +43,7 @@ class Languagemodel(nn.Module):
                 self.elmo = Elmo(options_file, weight_file, 2, dropout=0)
 
         def forward(self, span, a_vec, raw_span):
+                #span_vec = span
                 span_vec = self.word_embeddings(span)
                 character_ids = batch_to_ids(raw_span).cuda()
 
@@ -60,6 +66,7 @@ class Languagemodel(nn.Module):
                 return loss, gen_out
 
         def evaluate(self, span, raw_span):
+                #span_vec = span
                 span_vec = self.word_embeddings(span)
                 character_ids = batch_to_ids(raw_span).cuda()
 

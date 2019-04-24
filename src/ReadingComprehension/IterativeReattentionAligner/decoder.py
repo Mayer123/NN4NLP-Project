@@ -29,6 +29,7 @@ class Decoder(nn.Module):
         self.gen_fc = nn.Linear(hidden_size*2+self.embed_dim+hidden_size*2, 2)
 
     def forward(self, span, true_answer, mask, span_idx):
+        #span_idx[span_idx >= self.decode_dim] = 0
         batch_size = span.shape[0]
         encoded_span, last_state = self.answer_encoder(span)     # batch * seq * hidden*2 
         hidden = torch.cat((last_state[0,:,:],last_state[1,:,:]), 1)
@@ -38,7 +39,7 @@ class Decoder(nn.Module):
         output = self.word_embeddings(true_answer[:,0])
         for i in range(1, target_iterations):
             output, hidden, attn, gen_prob = self.decode(output, hidden, encoded_span, mask)
-            copy_dist = torch.zeros(batch_size, self.decode_dim).to(output.device)
+            copy_dist = torch.zeros(batch_size, self.full_vocab).to(output.device)
             #print (copy_dist.shape, span_idx.shape, attn.shape)
             copy_dist.scatter_(1, span_idx, attn)
             copy_dist = copy_dist[:,:self.decode_dim]
@@ -63,6 +64,7 @@ class Decoder(nn.Module):
         return output, hidden, attn_vector.squeeze(), gen_prob
 
     def generate(self, span, mask, span_idx):
+        #span_idx[span_idx >= self.decode_dim] = 0
         batch_size = span.shape[0]
         encoded_span, last_state = self.answer_encoder(span)     # batch * seq * hidden*2 
         hidden = torch.cat((last_state[0,:,:],last_state[1,:,:]), 1)
@@ -71,7 +73,7 @@ class Decoder(nn.Module):
         output = self.word_embeddings(torch.Tensor([2]*batch_size).long().to(span.device))
         for i in range(1, self.max_iterations):
             output, hidden, attn, gen_prob = self.decode(output, hidden, encoded_span, mask)
-            copy_dist = torch.zeros(batch_size, self.decode_dim).to(output.device)
+            copy_dist = torch.zeros(batch_size, self.full_vocab).to(output.device)
             copy_dist.scatter_(1, span_idx, attn)
             copy_dist = copy_dist[:,:self.decode_dim]
             output = output * gen_prob[:,0].unsqueeze(1) + copy_dist * gen_prob[:,1].unsqueeze(1)

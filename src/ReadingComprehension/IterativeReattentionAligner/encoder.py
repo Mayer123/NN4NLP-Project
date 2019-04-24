@@ -6,6 +6,8 @@ import numpy as np
 from ReadingComprehension.IterativeReattentionAligner.modules import IterativeAligner
 from ReadingComprehension.IterativeReattentionAligner.loss import DCRLLoss
 from ReadingComprehension.IterativeReattentionAligner.decoder import Decoder
+from ReadingComprehension.IterativeReattentionAligner.e2e_encoder import GaussianKernel
+from ReadingComprehension.IterativeReattentionAligner.e2e_encoder import WordOverlapLoss
 
 class MnemicReader(nn.Module):
     ## model(c_vec, c_pos, c_ner, c_em, c_mask, q_vec, q_pos, q_ner, q_em, q_mask, start, end)
@@ -60,6 +62,7 @@ class MnemicReader(nn.Module):
         # self.generative_decoder = Decoder(self.emb_size, hidden_size, self.word_embeddings, self.emb_size, self.vocab_size, 15, 0.4)
         # self.gen_loss = nn.NLLLoss(ignore_index=0)
         # self.fc_in = nn.Linear(word_embeddings.shape[1], hidden_size*2)
+        self.word_loss = WordOverlapLoss()
 
     def prepare_decoder_input(self, s_index, e_index, context):
         batch_size, seq_len, hidden_size = context.shape        
@@ -151,7 +154,7 @@ class MnemicReader(nn.Module):
         
         return s_prob, e_prob, probs, final_context
 
-    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, context, a1, a2, a_vec):
+    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, context, a1, a2, a_vec, alen):
         s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
                                                                         c_em, c_char_lens, c_mask, q_vec, 
                                                                         q_pos, q_ner, q_char, q_em, 
@@ -179,8 +182,22 @@ class MnemicReader(nn.Module):
         s_index = max_idx // context_len
         e_index = max_idx % context_len
 
+        pred_a = [c_vec[i, s_index[i]:e_index[i]] for i in range(len(s_index))]
+        
+        pred_a_len = [len(a) for a in pred_a]
+        padded_pred_a = torch.zeros(len(pred_a), max(pred_a_len), 
+                                   dtype=c_vec.dtype).to(c_vec.device)
+        for (i,x) in enumerate(pred_a):
+           padded_pred_a[i,:pred_a_len[i]] = x
+            
+        pred_a_emb = self.word_embeddings(padded_pred_a)
+        a_emb = self.word_embeddings(a_vec)
+
+        sim_loss = self.word_loss(a_emb, pred_a_emb, alen, s_index-e_index)
+        sim_loss = torch.mean(sim_loss)
+
         if not self.use_RLLoss:
-            return loss, loss, s_index, e_index
+            return sim_loss, sim_loss, s_index, e_index
 
         #return loss
         #s_prob = torch.exp(s_prob)
