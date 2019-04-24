@@ -10,7 +10,8 @@ class EndToEndModel(nn.Module):
 	"""docstring for End2EndModel"""
 	def __init__(self, ir_model, rc_model, n_ctx_sents=50):
 		super(EndToEndModel, self).__init__()
-		self.ir_model = ir_model
+		self.ir_model1 = ir_model
+		self.ir_model2 = ir_model
 		self.rc_model = rc_model
 		self.n_ctx_sents = n_ctx_sents	
 
@@ -39,18 +40,39 @@ class EndToEndModel(nn.Module):
 		
 		# print(torch.cuda.memory_allocated(0) / (1024)**3)
 		with torch.no_grad():
-			c_scores = self.ir_model.forward_singleContext(q, c, qlen, clen)
+			c_scores = self.ir_model1.forward_singleContext(q, c, qlen, clen)
+			
+			_, topk_idx = torch.topk(c_scores, self.n_ctx_sents*2, dim=1, sorted=False)
+			
+			ctx1 = [c[topk_idx[i]] for i in range(len(c_scores))]
+			ctx_len1 = [clen[topk_idx[i]] for i in range(len(c_scores))]
+			
+			ctx1 = torch.stack(ctx1, dim=0)
+			ctx_len1 = torch.stack(ctx_len1, dim=0)			
+		
+		for i in range(len(ctx1)):
+			c_scores = self.ir_model2.forward_singleContext(q[[i]], ctx1[i], qlen[[i]], ctx_len1[i])			
+			
+			_, topk_idx = torch.topk(c_scores[0], self.n_ctx_sents, dim=0)			
 
-		for i in range(len(c_scores)):
-			_, topk_idx = torch.topk(c_scores[i], self.n_ctx_sents, dim=0)
-
-			sents = c[topk_idx]
-			sent_lens = clen[topk_idx]
+			sents = ctx1[i, topk_idx]			
+			sent_lens = ctx_len1[i, topk_idx]
 			sents = [sents[j,:sent_lens[j]] for j in range(self.n_ctx_sents)]
 
-			ctx = torch.cat(sents, dim=0)
+			ctx2 = torch.cat(sents, dim=0)
 
-			selected_sents.append(ctx)
+			selected_sents.append(ctx2)
+
+		# for i in range(len(c_scores)):
+		# 	_, topk_idx = torch.topk(c_scores[i], self.n_ctx_sents, dim=0)
+
+		# 	sents = c[topk_idx]
+		# 	sent_lens = clen[topk_idx]
+		# 	sents = [sents[j,:sent_lens[j]] for j in range(self.n_ctx_sents)]
+
+		# 	ctx = torch.cat(sents, dim=0)
+
+		# 	selected_sents.append(ctx)
 
 		ctx_len = torch.tensor([len(s) for s in selected_sents]).long().to(c.device)
 		max_ctx_len = max(ctx_len)

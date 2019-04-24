@@ -150,7 +150,7 @@ class AttentionRM(nn.Module):
 															qlen_batch, clen_batch)
 		return scores
 
-	def forward_singleContext(self, q, d, qlen, dlen):
+	def forward_singleContext(self, q, d, qlen, dlen, batch_size=1024):
 		q = self.embed(q)
 		d = self.embed(d)
 
@@ -163,7 +163,7 @@ class AttentionRM(nn.Module):
 
 			# print(torch.cuda.memory_allocated(0) / (1024)**3)
 			# c_scores = self.score(q_, d, qlen_, dlen)
-			c_scores = self.getSentScores(q_, d, qlen_, dlen, 1024)
+			c_scores = self.getSentScores(q_, d, qlen_, dlen, batch_size)
 			# print(c_scores.shape)
 
 			scores.append(c_scores)
