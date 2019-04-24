@@ -7,9 +7,9 @@ import os
 import argparse
 import logging
 import pickle
-from ConvKNRM.modules import ConvKNRM
-from AttentionRM.modules import AttentionRM
-from prepro.preprocess import *
+from InformationRetrieval.AttentionRM.modules import AttentionRM
+from InformationRetrieval.prepro.preprocess import *
+from utils.utils import reset_embeddings
 
 class PairwiseDataset(D.Dataset):
     """docstring for PairwiseDataloader"""
@@ -76,16 +76,19 @@ def generate_embeddings(filename, word_dict):
                 embeddings[word_dict[tokens[0]]] = np.array(list(map(float, tokens[1:])))
                 count += 1
     #logger.info('Total vocab size %s pre-trained words %s' % (len(word_dict), count))
-    np.save("../prepro/embeddings.npy", embeddings)
+    
     return embeddings, trained_idx
 
-def computeMetrics(p_scores, n_scores):
-    labels = [1]*len(p_scores) + [0]*len(n_scores)
-    all_scores = torch.cat((p_scores, n_scores), dim=0)
-    sorted_labels = sorted(labels, 
-                        key=lambda i: all_scores[i])    
-    metrics = {'r@100': sum(sorted_labels[:100])}
-    return metrics
+def kendallTau(p_scores, n_scores):
+    p_scores = p_scores.view(-1)
+    n_scores = n_scores.view(-1)
+
+    ccordantPairs = torch.sum(p_scores > n_scores).float()
+    dcordantPairs = torch.sum(p_scores < n_scores).float()
+
+    n = p_scores.shape[0]
+    kt = (ccordantPairs - dcordantPairs) / n
+    return kt
 
 def train(args):
     global logger
@@ -110,20 +113,21 @@ def train(args):
     train_dl = D.DataLoader(train_ds, batch_size=args.train_batch_size, shuffle=True,
                             collate_fn=mCollateFn)    
 
-    dev_data_gen = convert_data(args.dev_file, w2i, update_dict=False)
+    dev_data_gen = convert_data(args.dev_file, w2i, pos2i, update_dict=False)
     Q_dev, P_dev, N_dev, y_dev = getIRPretrainData(dev_data_gen)
     dev_ds = PairwiseDataset(Q_dev, P_dev, N_dev, y_dev)
     dev_dl = D.DataLoader(dev_ds, batch_size=args.dev_batch_size, shuffle=False,
                             collate_fn=mCollateFn)
 
     logger.info('Generating embeddings')
-    embeddings, _ = generate_embeddings(args.embedding_file, w2i)
+    embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
     embeddings = torch.from_numpy(embeddings).float()
+    fixed_embeddings = embeddings[trained_idx]
 
     use_cuda = torch.cuda.is_available()
 
     if args.load_model != '':
-        model = torch.load(args.load_model)
+        model = torch.load(args.load_model)        
     else:
         model = AttentionRM(init_emb=embeddings, pos_vocab_size=len(pos2i))
 
@@ -135,6 +139,7 @@ def train(args):
     if use_cuda:
         torch.cuda.manual_seed(args.seed)
         model = model.cuda()
+        fixed_embeddings = fixed_embeddings.cuda()
 
     logger.info('Start training')
     logger.info('-' * 100)
@@ -167,6 +172,7 @@ def train(args):
                 loss.backward()
                 optimizer.step()
 
+                model.emb.weight.data[trained_idx] = fixed_embeddings
                 Train_Loss.append(float(loss))
                 t.set_postfix(loss=float(np.mean(Train_Loss)))
         model = model.eval()
@@ -187,11 +193,18 @@ def train(args):
                 # print(o2)
                 # print(y)
                 loss = criterion(o1, o2, y)
+                kt = kendallTau(o1, o2)
+
+                Dev_metric.append(float(kt))
                 Dev_Loss.append(float(loss))
             avg_dev_loss = np.mean(Dev_Loss)
+            # print(Dev_metric)
+            avg_dev_metric = np.mean(Dev_metric)
+
             scheduler.step(avg_dev_loss)
 
-            logger.info("avg_dev_loss = %.4f" % avg_dev_loss)
+            logger.info("avg_dev_loss = %.4f avg_dev_metric = %.4f" % (avg_dev_loss, 
+                                                                       avg_dev_metric))
             if avg_dev_loss < best:
                 best = avg_dev_loss
                 if args.save_results:

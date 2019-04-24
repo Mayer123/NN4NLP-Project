@@ -26,3 +26,7 @@ def getAligmentMatrix(v, u, mask=None, prev=None):
         E = E + prev
     E = masked_softmax(E, mask, 1)
     return E
+    
+def reset_embeddings(word_embeddings, fixed_embeddings, trained_idx):
+    word_embeddings.weight.data[trained_idx] = torch.FloatTensor(fixed_embeddings[trained_idx]).cuda()
+    return 

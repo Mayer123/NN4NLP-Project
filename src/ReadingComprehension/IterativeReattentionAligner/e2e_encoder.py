@@ -23,7 +23,7 @@ class WordOverlapLoss(nn.Module):
     """docstring for StringOverlapLoss"""
     def __init__(self):
         super(WordOverlapLoss, self).__init__()
-        self.G = GaussianKernel(1.0, 0.0001)
+        self.G = GaussianKernel(1.0, 0.001)
 
     def forward(self, s1, s2, s1_len, s2_len):
         # s1.shape = (batch, seq_len, emb_dim)
@@ -123,7 +123,7 @@ class MnemicReader(nn.Module):
 
         return con_char
 
-    def getAnswerSpanProbs(self, c_vec, c_pos, c_mask, q_vec, q_pos, q_mask):
+    def getAnswerSpanProbs(self, c_vec, c_pos, c_lens, q_vec, q_pos, q_lens):
         con_vec = self.word_embeddings(c_vec)
         con_pos = self.pos_emb(c_pos)     
 
@@ -167,13 +167,13 @@ class MnemicReader(nn.Module):
         enc_con = torch.cat(enc_con, 2).transpose(0, 1) # (batch_size, seq_len, enc_con_dim)
         enc_que = torch.cat(enc_que, 2).transpose(0, 1) # (batch_size, seq_len, enc_que_dim)            
         # print(enc_con.shape, enc_que.shape)
-        s_prob, e_prob, probs, final_context = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
+        s_prob, e_prob, probs, final_context = self.aligningBlock(enc_con, enc_que, u_lens=c_lens,  v_lens=q_lens)
         
         return s_prob, e_prob, probs, final_context
 
-    def forward(self, c_vec, c_pos, c_mask, q_vec, q_pos, q_mask, context, a_vec, alen):
-        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos,c_mask, 
-                                                                        q_vec, q_pos, q_mask)
+    def forward(self, c_vec, c_pos, c_lens, q_vec, q_pos, q_lens, context, a_vec, alen):
+        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos,c_lens, 
+                                                                        q_vec, q_pos, q_lens)
         #print (s_prob.shape, e_prob.shape)
         #print (start, end)
         #print (torch.gather(s_prob.squeeze(), 1, start.unsqueeze(1)))
@@ -258,7 +258,7 @@ if __name__ == '__main__':
                 [1, 2],
                 [3, 4],
                 [7, 8],
-                [9, 0],
+                [9, 0.],
             ],
             [
                 [1, 2],
@@ -266,11 +266,11 @@ if __name__ == '__main__':
                 [5, 6],
                 [5, 6],
             ]
-        ])
+        ], requires_grad=False)
 
     s2 = torch.tensor([
             [
-                [0, 2],
+                [1, 2],
                 [3, 4.09],
                 [5, 6],
                 [5, 6],
@@ -281,8 +281,16 @@ if __name__ == '__main__':
                 [5, 6],
                 [5, 6],
             ]
-        ])
-    print(loss(s1.float(), s2.float(), torch.tensor([4,2]), torch.tensor([2,2])))
+        ], requires_grad=True)
+    # w = nn.Linear(s1.shape[-1], s1.shape[-1], bias=False)
+    # s1 = w(s1)
+    # s2 = w(s2)
+
+    l = loss(s1.float(), s2.float(), torch.tensor([4,2]), torch.tensor([2,2]))
+    print(l)
+    l = torch.mean(l)
+    l.backward()
+    print(s2.grad)
     # seq_len = 60
     # seq_len2 = 40
     # batch = 2

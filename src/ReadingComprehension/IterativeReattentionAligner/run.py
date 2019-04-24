@@ -138,6 +138,7 @@ def train_full(args):
     logger.info('Generating embeddings')
     embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
     embeddings = torch.from_numpy(embeddings).float()
+    fixed_embeddings = embeddings[trained_idx]
 
     input_size = embeddings.shape[1] + args.pos_emb_size
 
@@ -158,22 +159,30 @@ def train_full(args):
         torch.backends.cudnn.enable = True
         torch.cuda.manual_seed(args.seed)
         model = model.cuda()
+        fixed_embeddings = fixed_embeddings.cuda()
 
     logger.info('Start training')
     logger.info('-' * 100)
     global_step = 0
     best = 0.0
+    pr = cProfile.Profile()
     for ITER in range(args.epochs):
         train_loss = 0.0
         start_time = time.time()
         model.train()
         if ITER >= args.RL_loss_after:
             model.use_RLLoss = True
+        # pr.enable()
         for batch in tqdm.tqdm(train_loader):
             global_step += 1
-            #print (global_step)
+            # if global_step == 20:
+            #     pr.disable()
+            #     s = io.StringIO()
+            #     ps = pstats.Stats(pr, stream=s).sort_stats('tottime')
+            #     ps.print_stats(10)
+            #     print(s.getvalue())
+            #     return
             q, passage, a, qlens, slens, alens, a1, a2 = batch
-            # print(q.dtype, passage.dtype, a.dtype, qlens.dtype, slens.dtype, alens.dtype)
             if use_cuda:
                 q = q.cuda()
                 passage = passage.cuda()
@@ -185,12 +194,18 @@ def train_full(args):
             batch_loss = model(q, passage, a, qlens, slens, alens)
             optimizer.zero_grad()
             batch_loss.backward()
-            
+
             train_loss += float(batch_loss)
             #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
             optimizer.step()
 
-            reset_embeddings(rc_model.word_embeddings[0], embeddings, trained_idx)
+            rc_model.word_embeddings[0].weight.data[trained_idx] = fixed_embeddings
+            # pr.disable()
+            # s = io.StringIO()
+            # ps = pstats.Stats(pr, stream=s).sort_stats('tottime')
+            # ps.print_stats(10)
+            # print(s.getvalue())
+            # return
             # if global_step % 100 == 0:
             #     logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
         logger.info("iter %r global_step %s : train loss/batch=%.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), time.time() - start_time))
