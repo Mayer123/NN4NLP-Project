@@ -132,7 +132,7 @@ def train(args):
         model = AttentionRM(init_emb=embeddings, pos_vocab_size=len(pos2i))
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', 
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
                                                             factor=0.5, patience=0,
                                                             verbose=True)
     criterion = nn.MarginRankingLoss(margin=1.0)
@@ -167,6 +167,7 @@ def train(args):
                 o1 = model(q, p, qlen, plen)
                 o2 = model(q, n, qlen, nlen)
                 loss = criterion(o1, o2, y)
+                kt = kendallTau(o1, o2)
                 
                 optimizer.zero_grad()
                 loss.backward()
@@ -174,7 +175,9 @@ def train(args):
 
                 model.emb.weight.data[trained_idx] = fixed_embeddings
                 Train_Loss.append(float(loss))
-                t.set_postfix(loss=float(np.mean(Train_Loss)))
+                Train_metric.append(float(kt))
+
+                t.set_postfix(loss=float(np.mean(Train_Loss)), kt=np.mean(Train_metric))
         model = model.eval()
         with torch.no_grad():
             for batch in dev_dl:
@@ -201,7 +204,7 @@ def train(args):
             # print(Dev_metric)
             avg_dev_metric = np.mean(Dev_metric)
 
-            scheduler.step(avg_dev_loss)
+            scheduler.step(avg_dev_metric)
 
             logger.info("avg_dev_loss = %.4f avg_dev_metric = %.4f" % (avg_dev_loss, 
                                                                        avg_dev_metric))
