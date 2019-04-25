@@ -53,9 +53,8 @@ class InteractiveAligner(nn.Module):
         # v.shape = B x n x end_dim
         
         # print "batch_size=%d, m=%d, n=%d, dim=%d" % (u.shape[0], u.shape[1], v.shape[1], v.shape[2])        
-        v_proj = F.relu(self.W_v(v))        
-        v_mask = output_mask(v_lens, maxlen=v_proj.shape[1]).unsqueeze(2)
-        
+        v_proj = F.relu(self.W_v(v)) 
+        v_mask = output_mask(v_lens, maxlen=v_proj.shape[1]).unsqueeze(2)        
         #v_proj = v_proj * v_mask
 
         u_proj = F.relu(self.W_u(u))
@@ -68,7 +67,8 @@ class InteractiveAligner(nn.Module):
         attended_v = torch.bmm(v.transpose(1,2), E).transpose(1,2)
         #attended_v = attended_v * u_mask
         # print E[4], v[4], attended_v[4]
-        # print "batch_size=%d, m=%d, dim=%d" % (attended_v.shape[0], attended_v.shape[1], attended_v.shape[2])
+        # print "batch_size=%d, m=%d, dim=%d" % (attended_v.shape[0], attended_v.shape[1], attended_v.shape[2])                
+
         fused_u = self.fusion(u, attended_v) # c_bar  
         # print u_lens[1], u[1], attended_v[1], fused_u[1]
         #print "batch_size=%d, n=%d, dim=%d" % (fused_u.shape[0], fused_u.shape[1], fused_u.shape[2])       
@@ -235,9 +235,10 @@ class IterativeAligner(nn.Module):
         assert (niters >= 1)
         self.niters = niters
 
-    def forward(self, u, v, u_mask, v_mask):
-        u_lens = torch.sum(u_mask, 1)
-        v_lens = torch.sum(v_mask, 1)
+    def forward(self, u, v, u_mask=None, v_mask=None, u_lens=None, v_lens=None):
+        if u_lens is None:
+            u_lens = torch.sum(u_mask, 1)
+            v_lens = torch.sum(v_mask, 1)
 
         R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(u, v, u_lens, v_lens)
         if self.niters > 1:

@@ -18,18 +18,22 @@ def convert_data(datafile, w2i={}, pos2i={}, update_dict=True):
 	for cid in data:
 		context = data[cid]['full_text']
 		for q in data[cid]['qaps']:
-			qwords = word_tokenize(q['question'].lower())	
-			awords = [word_tokenize(a.lower()) for a in q['answers']]
+			qwords = q['question_tokens']
+			qpos = q['question_pos']
+			awords = [q['answer1_tokens'],
+					  q['answer2_tokens']]
 
 			if update_dict:
-				qidx = [w2i.setdefault(w, len(w2i)) for w in qwords]		
+				qidx = [w2i.setdefault(w, len(w2i)) for w in qwords]
+				qposidx = [pos2i.setdefault(p, len(pos2i)) for p in qpos]
 				a1idx = [w2i.setdefault(w, len(w2i)) for w in awords[0]]
 				a2idx = [w2i.setdefault(w, len(w2i)) for w in awords[1]]
 			else:
-				qidx = [w2i.get(w, w2i['<unk>']) for w in qwords]		
+				qidx = [w2i.get(w, w2i['<unk>']) for w in qwords]
+				qposidx = [pos2i.get(p, pos2i['<unk>']) for p in qpos]
 				a1idx = [w2i.get(w, w2i['<unk>']) for w in awords[0]]
 				a2idx = [w2i.get(w, w2i['<unk>']) for w in awords[1]]		
-
+			qidx = np.stack((qidx, qposidx), axis=1)
 			# if q['_id'] in context_cache:
 			# 	context = context_cache[q['_id']]
 			# else:
@@ -52,7 +56,7 @@ def convert_data(datafile, w2i={}, pos2i={}, update_dict=True):
 					posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
 				else:
 					widx = [w2i.get(w, w2i['<unk>']) for w in words]
-					posidx = [pos2i.get(p, w2i['<unk>']) for p in pos]
+					posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
 				passage_idxs.append(np.stack((widx, posidx), axis=1))
 			if len(passage_idxs) > 0:
 				yield(qidx, a1idx, a2idx, passage_idxs, passage_scores)
@@ -68,7 +72,7 @@ def getIRPretrainData(data_gen):
 	np.random.seed(0)
 	for qidx, _, _, didxs, dscores in data_gen:
 		count += 1
-		# if count == 50:
+		# if count == 10:
 		# 	break
 		sys.stdout.write("\r%d" % count)
 		sys.stdout.flush()	
@@ -117,10 +121,10 @@ def getIRPretrainData(data_gen):
 	return Qs, Ps, Ns, y
 
 if __name__ == '__main__':
-	gen = convert_data('/home/kaixinm/NN4NLP-Project/prepro/narrativeqa_dev_fulltext_redo.pickle')
+	gen = convert_data('/home/kaixinm/NN4NLP-Project/prepro/narrativeqa_dev_fulltext.pickle')
 	q, p, n, y = getIRPretrainData(gen)
 	print(q.shape, p.shape, n.shape, y.shape)	
-	print(q[500])
-	print(p[500])
-	print(n[500])
-	print(y[500])
+	print(q[500].shape)
+	print(p[500].shape)
+	print(n[500].shape)
+	print(y[500].shape)
