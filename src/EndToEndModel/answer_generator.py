@@ -54,8 +54,12 @@ class AnswerGenerator(nn.Module):
                 gen_out = torch.zeros(batch_size, target_iter).to(generate_output.device)
                 for i in range(batch_size):
                         gen_out[i,:] = generate_output[i,:,:].max(1)[1]
-                generate_output = generate_output[:,1:,:].contiguous().view(-1, generate_output.shape[-1])
 
+                print(generate_output.shape)
+                generate_output = generate_output[:,1:,:].contiguous()
+                generate_output = generate_output.view(generate_output.shape[0]*generate_output.shape[1], generate_output.shape[2])
+                print(generate_output.shape)
+                
                 generate_output = F.softmax(generate_output, dim=1)
                 eps = 1e-8
                 generate_output = (1-eps)*generate_output + eps*torch.min(generate_output[generate_output != 0])

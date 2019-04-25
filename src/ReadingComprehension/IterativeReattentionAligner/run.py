@@ -206,7 +206,7 @@ def train_full(args):
             #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
             optimizer.step()
 
-            reset_embeddings(rc_model.word_embeddings[0], embeddings, trained_idx)
+            reset_embeddings(rc_model.word_embeddings, embeddings, trained_idx)
             if global_step % 100 == 0:
                 logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
             #rc_model.word_embeddings[0].weight.data[trained_idx] = fixed_embeddings
