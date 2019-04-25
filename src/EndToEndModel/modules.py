@@ -70,10 +70,10 @@ class EndToEndModel(nn.Module):
 			c_scores = self.ir_model1.forward_singleContext(q, c, qlen, clen,
 														batch_size=c_batch_size)
 			
-			_, topk_idx = torch.topk(c_scores, self.n_ctx_sents*2, dim=1, sorted=False)
+			_, topk_idx_ir1 = torch.topk(c_scores, self.n_ctx_sents*2, dim=1, sorted=False)
 			
-			ctx1 = [c[topk_idx[i]] for i in range(len(c_scores))]
-			ctx_len1 = [clen[topk_idx[i]] for i in range(len(c_scores))]
+			ctx1 = [c[topk_idx_ir1[i]] for i in range(len(c_scores))]
+			ctx_len1 = [clen[topk_idx_ir1[i]] for i in range(len(c_scores))]
 			
 			ctx1 = torch.stack(ctx1, dim=0)
 			ctx_len1 = torch.stack(ctx_len1, dim=0)			
@@ -97,7 +97,7 @@ class EndToEndModel(nn.Module):
 			# sents = c[topk_idx]
 			# sent_lens = clen[topk_idx]
 			# sents = [sents[j,:sent_lens[j]] for j in range(self.n_ctx_sents)]
-			string_sent = [p_words[_idx] for _idx in topk_idx]
+			string_sent = [p_words[_idx] for _idx in topk_idx_ir1[topk_idx]]
 			string_sent = [w for s in string_sent for w in s]
 			string_sents.append(string_sent)
 
@@ -125,6 +125,7 @@ class EndToEndModel(nn.Module):
 												q[:,:,0], q[:,:,1], qlen, 
 												None, avec1, alen)
 		print (extracted_span.shape)
+		print (sidx, eidx)
 		raw_span = []
 		for i in range(len(string_sents)):
 			raw_span.append(['<sos>'] + string_sents[i][sidx[i]:eidx[i]+1] + ['<eos>'])
