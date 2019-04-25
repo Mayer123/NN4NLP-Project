@@ -21,8 +21,10 @@ class GaussianKernel(object):
 
 class AttentionRM(nn.Module):
 	"""docstring for ConvKNRM"""
-	def __init__(self, emb_layer, pos_emb_layer, emb_trainable=True, vocab_size=None, 
-					pos_vocab_size=None, emb_dim=100, pos_emb_dim=20, out_channels=50, dropout=0.3):
+
+	def __init__(self, init_emb=None, emb_trainable=True, vocab_size=None, 
+					pos_vocab_size=None, emb_dim=100, dropout=0.3,
+					use_rnn=True):
 		super(AttentionRM, self).__init__()
 		# if init_emb is not None:
 		# 	self.emb = nn.Embedding.from_pretrained(init_emb, 
@@ -34,18 +36,19 @@ class AttentionRM(nn.Module):
 		self.pos_emb = pos_emb_layer
 		self.emb_proj = nn.Linear(emb_dim+pos_emb_dim, emb_dim)
 
-		# self.evidence_collector = nn.Sequential(
-		# 	nn.Conv1d(emb_dim, emb_dim, 5, padding=2),
-		# 	nn.Tanh(),
-		# 	nn.Dropout(dropout, inplace=True),
-		# 	nn.Conv1d(emb_dim, emb_dim, 3, padding=1),
-		# 	nn.Dropout(dropout, inplace=False),
-		# 	)
-
-		self.evidence_collector = nn.Sequential(
-                                    nn.LSTM(emb_dim, emb_dim//2, 1,
-                                        batch_first=True, bidirectional=True),                                    
-                                  )	
+		self.use_rnn = use_rnn
+		if use_rnn:
+			self.evidence_collector = nn.LSTM(emb_dim, emb_dim, 1,
+                                        batch_first=True, bidirectional=True)
+			self.evidence_proj = nn.Linear(2*emb_dim, emb_dim, bias=False)
+		else:
+			self.evidence_collector = nn.Sequential(
+				nn.Conv1d(emb_dim, emb_dim, 5, padding=2),
+				nn.Tanh(),
+				nn.Dropout(dropout, inplace=False),
+				nn.Conv1d(emb_dim, emb_dim, 3, padding=1),
+				nn.Dropout(dropout, inplace=False),
+				)		
 
 		self.mlp1 = nn.Sequential(
                         nn.Linear(2*emb_dim, emb_dim, bias=False),
@@ -90,27 +93,24 @@ class AttentionRM(nn.Module):
 		# print('attendedD size:',attendedD.storage().size() * attendedD.storage().element_size()/(1024**3))
 		# print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
 		del qng
-		# with torch.no_grad():
-		# 	for i in range(len(attendedD_len)):
-		# 		attendedD[i, attendedD_len[i]:,:] = 0
 		# print(attendedD.shape)
-		encoded,_ = self.evidence_collector(attendedD)
+		if self.use_rnn:
+			encoded,_ = self.evidence_collector(attendedD)
+			# print(encoded.shape)
+			encoded = self.evidence_proj(encoded)
+		else:
+			encoded = self.evidence_collector(attendedD.transpose(1,2))			
+			# print('encoded size:',encoded.storage().size() * encoded.storage().element_size()/(1024**3))
+			# print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
+			# print ('encoded.shape:', encoded.shape)						
+			encoded = encoded.transpose(1,2)
 
-		# print('encoded size:',encoded.storage().size() * encoded.storage().element_size()/(1024**3))
-		# print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
-		
-		# encoded = torch.mean(encoded, dim=2)
-		# print ('encoded.shape:', encoded.shape)
-		encoded = encoded #.transpose(1,2)		
 		s = self.summarizer(q_emb, qlen)
 		s = self.reduction(s)
 		s = s.expand(s.shape[0], encoded.shape[1], s.shape[2])	
 
 		catted = torch.cat((encoded, s, encoded*s, encoded-s), dim=2)
 		del encoded
-		# with torch.no_grad():
-		# 	for i in range(len(attendedD_len)):
-		# 		catted[i, attendedD_len[i]:,:] = 0
 
 		probs = self.mlp1(catted)
 		score = torch.mean(probs.view(probs.shape[0], -1), dim=1)

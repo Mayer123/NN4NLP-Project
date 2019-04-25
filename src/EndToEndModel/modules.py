@@ -10,7 +10,7 @@ class EndToEndModel(nn.Module):
 	"""docstring for End2EndModel"""
 	def __init__(self, ir_model, rc_model, ag_model, n_ctx_sents=3):
 		super(EndToEndModel, self).__init__()
-		self.ir_model1 = ir_model
+		self.ir_model1 = ir_model.eval()
 		self.ir_model2 = ir_model
 		self.rc_model = rc_model
 		self.ag_model = ag_model
@@ -60,7 +60,8 @@ class EndToEndModel(nn.Module):
 		
 		# print(torch.cuda.memory_allocated(0) / (1024)**3)
 		with torch.no_grad():
-			c_scores = self.ir_model1.forward_singleContext(q, c, qlen, clen)
+			c_scores = self.ir_model1.forward_singleContext(q, c, qlen, clen,
+														batch_size=c_batch_size)
 			
 			_, topk_idx = torch.topk(c_scores, self.n_ctx_sents*2, dim=1, sorted=False)
 			
@@ -71,7 +72,8 @@ class EndToEndModel(nn.Module):
 			ctx_len1 = torch.stack(ctx_len1, dim=0)			
 		
 		for i in range(len(ctx1)):
-			c_scores = self.ir_model2.forward_singleContext(q[[i]], ctx1[i], qlen[[i]], ctx_len1[i])			
+			c_scores = self.ir_model2.forward_singleContext(q[[i]], ctx1[i], qlen[[i]], ctx_len1[i],
+															batch_size=c_batch_size)			
 			
 			_, topk_idx = torch.topk(c_scores[0], self.n_ctx_sents, dim=0)			
 
