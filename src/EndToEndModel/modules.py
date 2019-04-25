@@ -54,11 +54,18 @@ class EndToEndModel(nn.Module):
 	# 			c_scores = self.ir_model(q_, c, qlen_, clen)
 	# 		#print(c_scores.shape)			
 
-	def forward(self, q, c, a, qlen, clen, alen, c_batch_size=512):
+	def forward(self, q, c, avec1, avec2, qlen, clen, alen, p_words, c_batch_size=512):
 		# print(q.shape, c.shape, a.shape)
 		selected_sents = []		
-		
+		string_sents = []
 		# print(torch.cuda.memory_allocated(0) / (1024)**3)
+		
+		# if q.shape[0] == 1:
+		# 	q = q.expand(2, -1, -1)
+		# 	qlen = qlen.expand(2)
+
+		# 	avec1 = avec1.exp
+		
 		with torch.no_grad():
 			c_scores = self.ir_model1.forward_singleContext(q, c, qlen, clen,
 														batch_size=c_batch_size)
@@ -90,9 +97,9 @@ class EndToEndModel(nn.Module):
 			# sents = c[topk_idx]
 			# sent_lens = clen[topk_idx]
 			# sents = [sents[j,:sent_lens[j]] for j in range(self.n_ctx_sents)]
-			# string_sent = [p_words[_idx] for _idx in topk_idx]
-			# string_sent = [w for s in string_sent for w in s]
-			# string_sents.append(string_sent)
+			string_sent = [p_words[_idx] for _idx in topk_idx]
+			string_sent = [w for s in string_sent for w in s]
+			string_sents.append(string_sent)
 
 		# for i in range(len(c_scores)):
 		# 	_, topk_idx = torch.topk(c_scores[i], self.n_ctx_sents, dim=0)
@@ -109,17 +116,13 @@ class EndToEndModel(nn.Module):
 		ctx_len = torch.tensor([len(s) for s in selected_sents]).long().to(c.device)
 		max_ctx_len = max(ctx_len)
 
-		ctx = torch.zeros(len(selected_sents), max_ctx_len, c.shape[2]).long().to(c.device)
+		ctx = torch.zeros(len(selected_sents), max_ctx_len, c.shape[2]).long().to(c.device)		
 		for (i, sents) in enumerate(selected_sents):
 			ctx[i,:len(sents)] = sents
-
-
-		scores = torch.stack(scores, dim=0)
-
-		c_mask = utils.output_mask(ctx_len)
-		q_mask = utils.output_mask(qlen)
-		loss1, loss2, sidx, eidx, extracted_span = self.rc_model(ctx[:,:,0], ctx[:,:,1], c_mask, 
-												q[:,:,0], q[:,:,1], q_mask, 
+		
+		print(ctx.shape, q.shape)
+		loss1, loss2, sidx, eidx, extracted_span = self.rc_model(ctx[:,:,0], ctx[:,:,1], ctx_len, 
+												q[:,:,0], q[:,:,1], qlen, 
 												None, avec1, alen)
 		print (extracted_span.shape)
 		raw_span = []

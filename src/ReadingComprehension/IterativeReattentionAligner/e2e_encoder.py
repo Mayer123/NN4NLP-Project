@@ -57,19 +57,16 @@ class MnemicReader(nn.Module):
         self.num_layers = num_layers
         self.rnn = nn.ModuleList()
 
-        self.pos_emb = nn.Sequential(
-            nn.Embedding(num_pos, pos_emb_dim, padding_idx=0),
-            nn.Dropout(emb_dropout)
-            )
+        self.pos_emb = nn.Embedding(num_pos, pos_emb_dim, padding_idx=0)
+        
         self.vocab_size = vocab_size
         self.emb_size = word_embeddings.shape[1]
         self.word_embeddings = torch.nn.Embedding(word_embeddings.shape[0], word_embeddings.shape[1], 
                                                     padding_idx=0)
         self.word_embeddings.weight.data.copy_(word_embeddings)
-        self.word_embeddings = nn.Sequential(
-            self.word_embeddings,
-            nn.Dropout(emb_dropout)
-            )
+        self.word_embeddings = self.word_embeddings
+
+        self.emb_dropout = nn.Dropout(emb_dropout)
         #self.answerPointerModel = answerPointerModel()    
         self.aligningBlock = IterativeAligner( 2 * hidden_size, hidden_size, 1, 3, dropout=rnn_dropout)
 
@@ -126,11 +123,11 @@ class MnemicReader(nn.Module):
         return con_char
 
     def getAnswerSpanProbs(self, c_vec, c_pos, c_lens, q_vec, q_pos, q_lens):
-        con_vec = self.word_embeddings(c_vec)
-        con_pos = self.pos_emb(c_pos)     
+        con_vec = self.emb_dropout(self.word_embeddings(c_vec))
+        con_pos = self.emb_dropout(self.pos_emb(c_pos))
 
-        que_vec = self.word_embeddings(q_vec)
-        que_pos = self.pos_emb(q_pos)
+        que_vec = self.emb_dropout(self.word_embeddings(q_vec))
+        que_pos = self.emb_dropout(self.pos_emb(q_pos))
 
         con_input = torch.cat([con_vec, con_pos], 2)
         que_input = torch.cat([que_vec, que_pos], 2)

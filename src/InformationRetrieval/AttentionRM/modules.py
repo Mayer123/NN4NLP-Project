@@ -22,18 +22,26 @@ class GaussianKernel(object):
 class AttentionRM(nn.Module):
 	"""docstring for ConvKNRM"""
 
-	def __init__(self, init_emb=None, emb_trainable=True, vocab_size=None, 
+	def __init__(self, emb_layer=None, pos_emb_layer=None, init_emb=None, emb_trainable=True, vocab_size=None, 
 					pos_vocab_size=None, emb_dim=100, dropout=0.3,
 					use_rnn=True):
 		super(AttentionRM, self).__init__()
-		# if init_emb is not None:
-		# 	self.emb = nn.Embedding.from_pretrained(init_emb, 
-		# 								freeze=(not emb_trainable))
-		# else:
-		# 	self.emb = nn.Embedding(vocab_size, emb_dim)
-		# self.pos_emb = nn.Embedding(pos_vocab_size, pos_emb_dim)
-		self.emb = emb_layer
-		self.pos_emb = pos_emb_layer
+		if emb_layer is not None:
+			self.emb = emb_layer
+			emb_dim = self.emb.weight.data.shape[1]
+
+		elif init_emb is not None:
+			self.emb = nn.Embedding.from_pretrained(init_emb, 
+										freeze=(not emb_trainable))
+		else:
+			self.emb = nn.Embedding(vocab_size, emb_dim)
+
+		if pos_emb_layer is not None:
+			self.pos_emb = pos_emb_layer
+			pos_emb_dim = self.pos_emb.weight.data.shape[1]
+		else:
+			self.pos_emb = nn.Embedding(pos_vocab_size, pos_emb_dim)
+		
 		self.emb_proj = nn.Linear(emb_dim+pos_emb_dim, emb_dim)
 
 		self.use_rnn = use_rnn
@@ -51,7 +59,7 @@ class AttentionRM(nn.Module):
 				)		
 
 		self.mlp1 = nn.Sequential(
-                        nn.Linear(2*emb_dim, emb_dim, bias=False),
+                        nn.Linear(4*emb_dim, emb_dim, bias=False),
                         nn.Tanh(),
                         nn.Dropout(dropout, inplace=False),
                         nn.Linear(emb_dim, 1, bias=False)
@@ -106,7 +114,6 @@ class AttentionRM(nn.Module):
 			encoded = encoded.transpose(1,2)
 
 		s = self.summarizer(q_emb, qlen)
-		s = self.reduction(s)
 		s = s.expand(s.shape[0], encoded.shape[1], s.shape[2])	
 
 		catted = torch.cat((encoded, s, encoded*s, encoded-s), dim=2)
@@ -157,8 +164,8 @@ class AttentionRM(nn.Module):
 		q = self.embed(q)
 		d = self.embed(d)
 
-		scores = []
-		for i in range(q.shape[0]):
+		scores = []		
+		for i in range(q.shape[0]):			
 			q_ = q[i, :qlen[i]]
 			q_ = q_.expand(d.shape[0], -1, -1)
 
