@@ -47,6 +47,7 @@ def add_arguments(parser):
     parser.add_argument('--model_name', type=str, default="rmr.pt", help='path to the log file')
     parser.add_argument('--save_results', action='store_true', help='path to the log file')
     parser.add_argument('--RL_loss_after', type=int, default=5, help='path to the log file')
+    parser.add_argument('--load_ir_model', type=str, default="", help='path to the log file')
     parser.add_argument('--mode', type=str, default='summary', help='path to the log file')  
 
 def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
@@ -95,9 +96,15 @@ def generate_answer(indices, id2words):
 
 def generate_scores(rouge, generate_output, id2words, a1, a2):
     rouge_score = 0.0
-    for i in range(0, len(generate_output)):
+    for i in range(0, len(generate_output)):        
         pred = generate_answer(generate_output[i], id2words)
         pred_ans = ' '.join(pred)
+
+        # print('pred_idx:',generate_output[i])
+        # print('a1:', a1[i])
+        # print("pred_ans:", pred_ans)
+        # print('')
+
         if pred_ans in stoplist or pred_ans == '':
             pred_ans = 'NO-ANSWER-FOUND'
         rouge_score += max(rouge.get_scores(pred_ans, a1[i])[0]['rouge-l']['f'], rouge.get_scores(pred_ans, a2[i])[0]['rouge-l']['f'])
@@ -144,13 +151,16 @@ def train_full(args):
 
     use_cuda = torch.cuda.is_available()
 
-    ir_model = AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i))
+    if args.load_ir_model != '':
+        ir_model = torch.load(args.load_ir_model)
+    else:
+        ir_model = AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i))
     rc_model = e2e_MnemicReader(input_size, args.hidden_size, args.num_layers,
                             args.pos_emb_size, embeddings, len(tag2i)+2, len(w2i)+4,
                             args.emb_dropout, args.rnn_dropout)
     model = EndToEndModel(ir_model, rc_model)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
                                                             factor=0.5, patience=0,
                                                             verbose=True)
@@ -170,10 +180,14 @@ def train_full(args):
         train_loss = 0.0
         start_time = time.time()
         model.train()
+
+        Train_Loss = []
+
         if ITER >= args.RL_loss_after:
             model.use_RLLoss = True
         # pr.enable()
-        for batch in tqdm.tqdm(train_loader):
+        t = tqdm.tqdm(train_loader)
+        for batch in t:
             global_step += 1
             # if global_step == 20:
             #     pr.disable()
@@ -196,10 +210,13 @@ def train_full(args):
             batch_loss.backward()
 
             train_loss += float(batch_loss)
+            Train_Loss.append(float(batch_loss))
             #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
             optimizer.step()
 
             rc_model.word_embeddings[0].weight.data[trained_idx] = fixed_embeddings
+
+            t.set_postfix(loss=float(np.mean(Train_Loss)))
             # pr.disable()
             # s = io.StringIO()
             # ps = pstats.Stats(pr, stream=s).sort_stats('tottime')
@@ -274,9 +291,12 @@ def main(args):
     train = convert_data(training_data, w2i, tag2i, ner2i, c2i, common_vocab, 800)
     dev = convert_data(dev_data, w2i, tag2i, ner2i, c2i, common_vocab)
     #dev = list(dev)[0:32]
-    id2words = {}
-    for k, v in common_vocab.items():
-        id2words[v] = k
+    
+    # id2words = {}
+    # for k, v in common_vocab.items():
+    #     id2words[v] = k    
+    id2words = {v:k for k,v in common_vocab.items()}
+
     train = TextDataset(list(train))
     dev = TextDataset(list(dev))
     print (len(train))
@@ -318,61 +338,67 @@ def main(args):
         train_loss = 0.0
         train_CE_loss = 0.0
         train_rouge_score = 0.0
+        gen_rouge = 0.0
         start_time = time.time()
         model.train()
-        if ITER >= args.RL_loss_after:
-            model.use_RLLoss = True
-        for batch in tqdm.tqdm(train_loader):
-            # pr.enable()
-            global_step += 1
-            #print (global_step)
-            c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2, _id, a_vec = batch
-            c_vec, c_pos, c_ner, c_em, c_char, c_char_lens, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
-            q_vec, q_pos, q_ner, q_em, q_char, q_char_lens, q_mask = pad_sequence(q_vec, q_pos, q_ner, q_char, q_em)
-            a_vec = pad_answer(a_vec)
-            start = torch.as_tensor(start)
-            end = torch.as_tensor(end)
-            c_em = c_em.float()
-            q_em = q_em.float()
-            if use_cuda:
-                c_vec = c_vec.cuda()
-                c_pos = c_pos.cuda()
-                c_ner = c_ner.cuda()
-                c_char = c_char.cuda()
-                c_em = c_em.cuda()
-                c_mask = c_mask.cuda()
-                q_vec = q_vec.cuda()
-                q_pos = q_pos.cuda()
-                q_ner = q_ner.cuda()
-                q_char = q_char.cuda()
-                q_em = q_em.cuda()
-                q_mask = q_mask.cuda()
-                start = start.cuda()
-                end = end.cuda()
-                #a_vec = a_vec.cuda()
-            
-            batch_loss, CE_loss, s_index, e_index = model(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, c, a1, a2, a_vec)
-            train_loss += batch_loss.cpu().item()
-            train_CE_loss += CE_loss.cpu().item()
-            #tmp = generate_scores(rouge, gen_out.tolist(), id2words, a1, a2)
-            #batch_score = compute_scores(rouge, rrrouge, s_index.tolist(), e_index.tolist(), c, a1, a2)
-            #train_rouge_score += batch_score[0]
-            optimizer.zero_grad()
-            batch_loss.backward()
-            #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
-            optimizer.step()
-            reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
-            # pr.disable()
-            # s = io.StringIO()
-            # ps = pstats.Stats(pr, stream=s).sort_stats('tottime')
-            # ps.print_stats()
-            # print(s.getvalue())
-            # return
-            # if global_step % 100 == 0:
-            #     logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
-        Train_Rouge.append(train_rouge_score/len(train))
-        Train_Loss.append(train_CE_loss/len(train_loader))
-        logger.info("iter %r global_step %s : train loss/batch=%.4f, train CE loss/batch %.4f, train rouge score %.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), train_CE_loss/len(train_loader), train_rouge_score/len(train), time.time() - start_time))
+        local_step = 0
+        if 1 == 1:            
+            if ITER >= args.RL_loss_after:
+                model.use_RLLoss = True
+            t = tqdm.tqdm(train_loader)
+            for batch in t:
+                # pr.enable()
+                global_step += 1
+                local_step += 1
+                #print (global_step)
+                c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2, _id, a_vec = batch
+                c_vec, c_pos, c_ner, c_em, c_char, c_char_lens, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
+                q_vec, q_pos, q_ner, q_em, q_char, q_char_lens, q_mask = pad_sequence(q_vec, q_pos, q_ner, q_char, q_em)
+                a_vec = pad_answer(a_vec)
+                start = torch.as_tensor(start)
+                end = torch.as_tensor(end)
+                c_em = c_em.float()
+                q_em = q_em.float()
+                if use_cuda:
+                    c_vec = c_vec.cuda()
+                    c_pos = c_pos.cuda()
+                    c_ner = c_ner.cuda()
+                    c_char = c_char.cuda()
+                    c_em = c_em.cuda()
+                    c_mask = c_mask.cuda()
+                    q_vec = q_vec.cuda()
+                    q_pos = q_pos.cuda()
+                    q_ner = q_ner.cuda()
+                    q_char = q_char.cuda()
+                    q_em = q_em.cuda()
+                    q_mask = q_mask.cuda()
+                    start = start.cuda()
+                    end = end.cuda()
+                    a_vec = a_vec.cuda()
+                
+                batch_loss, CE_loss, s_index, e_index, generate_output = model(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, c, a1, a2, a_vec)
+                train_loss += batch_loss.cpu().item()
+                train_CE_loss += CE_loss.cpu().item()
+                gen_rouge += generate_scores(rouge, generate_output.tolist(), id2words, a1, a2)/generate_output.shape[0]
+                #batch_score = compute_scores(rouge, rrrouge, s_index.tolist(), e_index.tolist(), c, a1, a2)
+                #train_rouge_score += batch_score[0]
+                optimizer.zero_grad()
+                batch_loss.backward()
+                #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
+                optimizer.step()
+                reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
+                # pr.disable()
+                # s = io.StringIO()
+                # ps = pstats.Stats(pr, stream=s).sort_stats('tottime')
+                # ps.print_stats()
+                # print(s.getvalue())
+                # return
+                # if global_step % 100 == 0:
+                #     logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
+                t.set_postfix(loss=train_loss/local_step, gen_rouge=gen_rouge/local_step)
+            Train_Rouge.append(gen_rouge/len(train))
+            Train_Loss.append(train_CE_loss/len(train_loader))
+            logger.info("iter %r global_step %s : train loss/batch=%.4f, train CE loss/batch %.4f, train rouge score %.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), train_CE_loss/len(train_loader), train_rouge_score/len(train), time.time() - start_time))
         model.eval()
         with torch.no_grad():
             dev_start_acc = 0.0
@@ -397,6 +423,7 @@ def main(args):
                 end = torch.as_tensor(end)
                 c_em = c_em.float()
                 q_em = q_em.float()
+                a_vec = pad_answer(a_vec)
                 if use_cuda:
                     c_vec = c_vec.cuda()
                     c_pos = c_pos.cuda()
@@ -411,13 +438,15 @@ def main(args):
                     q_em = q_em.cuda()
                     q_mask = q_mask.cuda()
 
-                pred_start, pred_end, s_prob, e_prob = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask)
+                pred_start, pred_end, s_prob, e_prob, generate_output = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask)
+                
                 loss1 = nlloss(s_prob.cpu(), start)
                 loss2 = nlloss(e_prob.cpu(), end)
                 CE_loss = loss1 + loss2
                 dev_loss += CE_loss.cpu().item()
+                
                 batch_score = compute_scores(rouge, rrrouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
-                #gen_rouge += generate_scores(rouge, generate_output.tolist(), id2words, a1, a2)
+                gen_rouge += generate_scores(rouge, generate_output.tolist(), id2words, a1, a2)/generate_output.shape[0]                
                 rouge_scores += batch_score[0]
                 bleu1_scores += batch_score[1]
                 bleu4_scores += batch_score[2]

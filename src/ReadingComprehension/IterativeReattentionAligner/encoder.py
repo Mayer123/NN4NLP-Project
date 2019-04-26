@@ -6,6 +6,8 @@ import numpy as np
 from ReadingComprehension.IterativeReattentionAligner.modules import IterativeAligner
 from ReadingComprehension.IterativeReattentionAligner.loss import DCRLLoss
 from ReadingComprehension.IterativeReattentionAligner.decoder import Decoder
+from AnswerGenerator.decoder import GRUDecoder  
+
 
 class MnemicReader(nn.Module):
     ## model(c_vec, c_pos, c_ner, c_em, c_mask, q_vec, q_pos, q_ner, q_em, q_mask, start, end)
@@ -57,6 +59,11 @@ class MnemicReader(nn.Module):
             self.rnn.append(lstm)
 
         self.use_RLLoss = False
+
+        print(hidden_size)
+        self.decoder = GRUDecoder(word_embeddings.shape[1], 2*hidden_size, 1, word_embeddings.shape[0], 
+                                    word_embeddings=self.word_embeddings)
+        self.decoder_loss = nn.CrossEntropyLoss(ignore_index=0, reduction='sum')
         # self.generative_decoder = Decoder(self.emb_size, hidden_size, self.word_embeddings, self.emb_size, self.vocab_size, 15, 0.4)
         # self.gen_loss = nn.NLLLoss(ignore_index=0)
         # self.fc_in = nn.Linear(word_embeddings.shape[1], hidden_size*2)
@@ -147,12 +154,12 @@ class MnemicReader(nn.Module):
         enc_con = torch.cat(enc_con, 2).transpose(0, 1) # (batch_size, seq_len, enc_con_dim)
         enc_que = torch.cat(enc_que, 2).transpose(0, 1) # (batch_size, seq_len, enc_que_dim)            
         # print(enc_con.shape, enc_que.shape)
-        s_prob, e_prob, probs, final_context = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
+        s_prob, e_prob, probs, final_context, hidden_R = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
         
-        return s_prob, e_prob, probs, final_context
+        return s_prob, e_prob, probs, final_context, hidden_R
 
     def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, context, a1, a2, a_vec):
-        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
+        s_prob, e_prob, probs, final_context, hidden_R = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
                                                                         c_em, c_char_lens, c_mask, q_vec, 
                                                                         q_pos, q_ner, q_char, q_em, 
                                                                         q_char_lens, q_mask)
@@ -179,8 +186,27 @@ class MnemicReader(nn.Module):
         s_index = max_idx // context_len
         e_index = max_idx % context_len
 
+        context_embed = []
+        # for i in range(final_context.shape[0]):
+        #     context_embed.append(final_context[i, s_index[i]:e_index[i]])
+        # context_embed = torch.stack(context_embed, dim=0)
+        # context_embed            
+        hidden_R = hidden_R.transpose(0,1)
+        hidden_R = hidden_R.contiguous().view(hidden_R.shape[0], -1)
+
+        a_vec = a_vec.transpose(0,1)
+        pred_logits = self.decoder(hidden_R, a_vec, None, 2, gumbel=True)
+        pred_logits = pred_logits.transpose(0,1)
+
+        _, pred_ans = torch.max(pred_logits, dim=2)
+
+        a_vec = a_vec.transpose(0,1)
+        pred_logits = pred_logits.contiguous().view(-1, pred_logits.shape[2])
+        a_vec = a_vec.contiguous().view(-1)
+        loss = self.decoder_loss(pred_logits, a_vec)
+
         if not self.use_RLLoss:
-            return loss, loss, s_index, e_index
+            return loss, loss, s_index, e_index, pred_ans
 
         #return loss
         #s_prob = torch.exp(s_prob)
@@ -213,7 +239,7 @@ class MnemicReader(nn.Module):
         return loss * a1 + rl_loss * a2 + b1 + b2, loss, s_index, e_index
 
     def evaluate(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask):
-        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
+        s_prob, e_prob, probs, final_context, hidden_R = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
                                                                         c_em, c_char_lens, c_mask, q_vec, 
                                                                         q_pos, q_ner, q_char, q_em, 
                                                                         q_char_lens, q_mask)
@@ -227,7 +253,18 @@ class MnemicReader(nn.Module):
         e_index = max_idx % context_len
         # decode_input = self.prepare_decoder_input(s_index, e_index, con_vec)
         # generate_output = self.generative_decoder.generate(decode_input)
-        return s_index, e_index, torch.log(s_prob), torch.log(e_prob)
+
+        hidden_R = hidden_R.transpose(0,1)
+        hidden_R = hidden_R.contiguous().view(hidden_R.shape[0], -1)
+        
+        c_vec = c_vec.transpose(0,1)
+
+        pred_ans = self.decoder(hidden_R, c_vec, None, 2, generated_seqlen=10, gumbel=True)
+        pred_ans = pred_ans.transpose(0,1)
+
+        _,pred_ans = torch.max(pred_ans, dim=2)
+
+        return s_index, e_index, torch.log(s_prob), torch.log(e_prob), pred_ans
 
 if __name__ == '__main__':
     seq_len = 60
