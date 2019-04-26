@@ -8,10 +8,10 @@ from ReadingComprehension.IterativeReattentionAligner.loss import DCRLLoss
 from ReadingComprehension.IterativeReattentionAligner.decoder import Decoder
 from ReadingComprehension.IterativeReattentionAligner.e2e_encoder import GaussianKernel
 from ReadingComprehension.IterativeReattentionAligner.e2e_encoder import WordOverlapLoss
-from allennlp.modules.elmo import Elmo, batch_to_ids
+#from allennlp.modules.elmo import Elmo, batch_to_ids
 
-options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
-weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
+#options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
+#weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
 
 class MnemicReader(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, char_emb_dim, 
@@ -61,9 +61,9 @@ class MnemicReader(nn.Module):
             self.rnn.append(lstm)
 
         self.use_RLLoss = False
-        self.generative_decoder = Decoder(hidden_size*2+2048, hidden_size, self.word_embeddings, self.emb_size, self.vocab_size, self.full_vocab, 15, 0.4)
+        self.generative_decoder = Decoder(hidden_size*2, hidden_size, self.word_embeddings, self.emb_size, self.vocab_size, self.full_vocab, 15, 0.4)
         self.gen_loss = nn.NLLLoss(ignore_index=0)
-        self.elmo = Elmo(options_file, weight_file, 2, dropout=0)
+        #self.elmo = Elmo(options_file, weight_file, 2, dropout=0)
         # self.fc_in = nn.Linear(word_embeddings.shape[1], hidden_size*2)
         #self.word_loss = WordOverlapLoss()
 
@@ -198,10 +198,10 @@ class MnemicReader(nn.Module):
 
         #sim_loss = self.word_loss(a_emb, pred_a_emb, alen, s_index-e_index)
         #sim_loss = torch.mean(sim_loss)
-        character_ids = batch_to_ids(context).to(c_vec.device)
+        #character_ids = batch_to_ids(context).to(c_vec.device)
 
-        elmo_embeddings = self.elmo(character_ids)
-        final_context = torch.cat([final_context]+elmo_embeddings['elmo_representations'], dim=2)
+        #elmo_embeddings = self.elmo(character_ids)
+        #final_context = torch.cat([final_context]+elmo_embeddings['elmo_representations'], dim=2)
         generate_output = self.generative_decoder(final_context, a_vec, c_mask, c_vec)
         batch_size, target_iter = a_vec.shape
         gen_out = torch.zeros(batch_size, target_iter).to(generate_output.device)
@@ -259,10 +259,10 @@ class MnemicReader(nn.Module):
         s_index = max_idx // context_len
         e_index = max_idx % context_len
         # decode_input = self.prepare_decoder_input(s_index, e_index, con_vec)
-        character_ids = batch_to_ids(context).to(c_vec.device)
+        #character_ids = batch_to_ids(context).to(c_vec.device)
 
-        elmo_embeddings = self.elmo(character_ids)
-        final_context = torch.cat([final_context]+elmo_embeddings['elmo_representations'], dim=2)
+        #elmo_embeddings = self.elmo(character_ids)
+        #final_context = torch.cat([final_context]+elmo_embeddings['elmo_representations'], dim=2)
         generate_output = self.generative_decoder.generate(final_context, c_mask, c_vec)
         return s_index, e_index, torch.log(s_prob), torch.log(e_prob), generate_output
 

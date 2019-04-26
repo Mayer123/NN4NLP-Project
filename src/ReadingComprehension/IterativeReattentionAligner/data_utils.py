@@ -267,7 +267,7 @@ def build_dicts(data):
     char_dict = {}
     common_vocab = {}
     for i, (k, v) in enumerate(w2i.most_common()):
-        if v >= 500:
+        if v >= 20:
             common_vocab[k] = i + 4                         # <SOS> for 2 <EOS> for 3
     for i, (k, v) in enumerate(w2i.most_common()):
         word_dict[k] = i + 4                         # <SOS> for 2 <EOS> for 3
