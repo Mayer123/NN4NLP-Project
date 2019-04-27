@@ -6,8 +6,7 @@ import numpy as np
 from ReadingComprehension.IterativeReattentionAligner.modules import IterativeAligner
 from ReadingComprehension.IterativeReattentionAligner.loss import DCRLLoss
 from ReadingComprehension.IterativeReattentionAligner.decoder import Decoder
-from AnswerGenerator.decoder import GRUDecoder  
-
+from AnswerGenerator.decoder import GRUDecoder
 
 class MnemicReader(nn.Module):
     ## model(c_vec, c_pos, c_ner, c_em, c_mask, q_vec, q_pos, q_ner, q_em, q_mask, start, end)
@@ -62,7 +61,7 @@ class MnemicReader(nn.Module):
 
         print(hidden_size)
         self.decoder = GRUDecoder(word_embeddings.shape[1], 2*hidden_size, 1, word_embeddings.shape[0], 
-                                    word_embeddings=self.word_embeddings)
+                                    word_embeddings=self.word_embeddings, use_attention=False)
         self.decoder_loss = nn.CrossEntropyLoss(ignore_index=0, reduction='sum')
         # self.generative_decoder = Decoder(self.emb_size, hidden_size, self.word_embeddings, self.emb_size, self.vocab_size, 15, 0.4)
         # self.gen_loss = nn.NLLLoss(ignore_index=0)
@@ -158,7 +157,29 @@ class MnemicReader(nn.Module):
         
         return s_prob, e_prob, probs, final_context, hidden_R
 
-    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, context, a1, a2, a_vec):
+    def getDecoderLoss(self, pred_logits, a_vec):
+        a_vec = a_vec.contiguous().view(-1)
+        pred_logits = pred_logits.contiguous().view(-1, pred_logits.shape[2])        
+        decoder_loss = self.decoder_loss(pred_logits, a_vec)
+        return decoder_loss
+
+    def getPredsFromGenerator(self, hidden_R, final_context, s_index, e_index, a_vec):        
+        hidden_R = hidden_R.transpose(0,1)
+        hidden_R = hidden_R.contiguous().view(hidden_R.shape[0], -1)
+
+        ctx_span_len = e_index - s_index
+        ctx_span = [final_context[i, s_index[i]:e_index[i]] for i in range(final_context.shape[0])]        
+        ctx_span = nn.utils.rnn.pad_sequence(ctx_span, batch_first=True)        
+
+        pred_logits = self.decoder(ctx_span, ctx_span_len, a_vec, 2, gumbel=True, 
+                                    initial_hidden=hidden_R)
+        pred_logits = pred_logits.transpose(0,1)
+
+        _, pred_ans = torch.max(pred_logits, dim=2)        
+
+        return pred_logits, pred_ans
+
+    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, context, a1, a2, a_vec):        
         s_prob, e_prob, probs, final_context, hidden_R = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
                                                                         c_em, c_char_lens, c_mask, q_vec, 
                                                                         q_pos, q_ner, q_char, q_em, 
@@ -179,31 +200,16 @@ class MnemicReader(nn.Module):
         loss2 = self.loss(torch.log(e_prob), end)
         loss = loss1 + loss2
 
-        context_len = s_prob.shape[1]
-        #loss = self.loss(probs, start*context_len + end)
+        context_len = final_context.shape[1]
         
         max_idx = torch.argmax(probs, dim=1)
         s_index = max_idx // context_len
         e_index = max_idx % context_len
-
-        context_embed = []
-        # for i in range(final_context.shape[0]):
-        #     context_embed.append(final_context[i, s_index[i]:e_index[i]])
-        # context_embed = torch.stack(context_embed, dim=0)
-        # context_embed            
-        hidden_R = hidden_R.transpose(0,1)
-        hidden_R = hidden_R.contiguous().view(hidden_R.shape[0], -1)
-
-        a_vec = a_vec.transpose(0,1)
-        pred_logits = self.decoder(hidden_R, a_vec, None, 2, gumbel=True)
-        pred_logits = pred_logits.transpose(0,1)
-
-        _, pred_ans = torch.max(pred_logits, dim=2)
-
-        a_vec = a_vec.transpose(0,1)
-        pred_logits = pred_logits.contiguous().view(-1, pred_logits.shape[2])
-        a_vec = a_vec.contiguous().view(-1)
-        loss = self.decoder_loss(pred_logits, a_vec)
+            
+        pred_logits, pred_ans = self.getPredsFromGenerator(hidden_R, final_context, s_index, 
+                                                            e_index, a_vec.transpose(0,1))
+        decoder_loss = self.getDecoderLoss(pred_logits, a_vec)
+        loss = decoder_loss
 
         if not self.use_RLLoss:
             return loss, loss, s_index, e_index, pred_ans
@@ -247,22 +253,13 @@ class MnemicReader(nn.Module):
         s_prob = torch.squeeze(s_prob)
         e_prob = torch.squeeze(e_prob)
 
-        context_len = s_prob.shape[1]
+        context_len = final_context.shape[1]
+        
         max_idx = torch.argmax(probs, dim=1)
         s_index = max_idx // context_len
         e_index = max_idx % context_len
-        # decode_input = self.prepare_decoder_input(s_index, e_index, con_vec)
-        # generate_output = self.generative_decoder.generate(decode_input)
 
-        hidden_R = hidden_R.transpose(0,1)
-        hidden_R = hidden_R.contiguous().view(hidden_R.shape[0], -1)
-        
-        c_vec = c_vec.transpose(0,1)
-
-        pred_ans = self.decoder(hidden_R, c_vec, None, 2, generated_seqlen=10, gumbel=True)
-        pred_ans = pred_ans.transpose(0,1)
-
-        _,pred_ans = torch.max(pred_ans, dim=2)
+        _, pred_ans = self.getPredsFromGenerator(hidden_R, final_context, s_index, e_index, None)
 
         return s_index, e_index, torch.log(s_prob), torch.log(e_prob), pred_ans
 

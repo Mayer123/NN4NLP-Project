@@ -100,10 +100,10 @@ def generate_scores(rouge, generate_output, id2words, a1, a2):
         pred = generate_answer(generate_output[i], id2words)
         pred_ans = ' '.join(pred)
 
-        # print('pred_idx:',generate_output[i])
-        # print('a1:', a1[i])
-        # print("pred_ans:", pred_ans)
-        # print('')
+        print('pred_idx:',generate_output[i])
+        print('a1:', a1[i])
+        print("pred_ans:", pred_ans)
+        print('')
 
         if pred_ans in stoplist or pred_ans == '':
             pred_ans = 'NO-ANSWER-FOUND'
@@ -317,8 +317,8 @@ def main(args):
     else:
         model = torch.load(args.load_model)
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=0.0001)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', 
                                                            factor=0.5, patience=0,
                                                            verbose=True)
     if use_cuda:
@@ -347,6 +347,7 @@ def main(args):
                 model.use_RLLoss = True
             t = tqdm.tqdm(train_loader)
             for batch in t:
+                # print(torch.cuda.memory_allocated(0) / (1024)**3)
                 # pr.enable()
                 global_step += 1
                 local_step += 1
@@ -376,10 +377,7 @@ def main(args):
                     end = end.cuda()
                     a_vec = a_vec.cuda()
                 
-                batch_loss, CE_loss, s_index, e_index, generate_output = model(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, c, a1, a2, a_vec)
-                train_loss += batch_loss.cpu().item()
-                train_CE_loss += CE_loss.cpu().item()
-                gen_rouge += generate_scores(rouge, generate_output.tolist(), id2words, a1, a2)/generate_output.shape[0]
+                batch_loss, CE_loss, s_index, e_index, generate_output = model(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, c, a1, a2, a_vec)                
                 #batch_score = compute_scores(rouge, rrrouge, s_index.tolist(), e_index.tolist(), c, a1, a2)
                 #train_rouge_score += batch_score[0]
                 optimizer.zero_grad()
@@ -387,6 +385,11 @@ def main(args):
                 #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
                 optimizer.step()
                 reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
+
+                train_loss += float(batch_loss.detach().cpu())
+                train_CE_loss += float(CE_loss.detach().cpu())
+                gen_rouge += generate_scores(rouge, generate_output.detach().cpu().tolist(), 
+                                                id2words, a1, a2)/generate_output.shape[0]
                 # pr.disable()
                 # s = io.StringIO()
                 # ps = pstats.Stats(pr, stream=s).sort_stats('tottime')
@@ -398,6 +401,7 @@ def main(args):
                 t.set_postfix(loss=train_loss/local_step, gen_rouge=gen_rouge/local_step)
             Train_Rouge.append(gen_rouge/len(train))
             Train_Loss.append(train_CE_loss/len(train_loader))
+            scheduler.step(train_loss/local_step)
             logger.info("iter %r global_step %s : train loss/batch=%.4f, train CE loss/batch %.4f, train rouge score %.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), train_CE_loss/len(train_loader), train_rouge_score/len(train), time.time() - start_time))
         model.eval()
         with torch.no_grad():
@@ -445,8 +449,10 @@ def main(args):
                 CE_loss = loss1 + loss2
                 dev_loss += CE_loss.cpu().item()
                 
-                batch_score = compute_scores(rouge, rrrouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
-                gen_rouge += generate_scores(rouge, generate_output.tolist(), id2words, a1, a2)/generate_output.shape[0]                
+                batch_score = compute_scores(rouge, rrrouge, pred_start.detach().cpu().tolist(), 
+                                                pred_end.detach().cpu().tolist(), c, a1, a2)
+                gen_rouge += generate_scores(rouge, generate_output.detach().cpu().tolist(), 
+                                                id2words, a1, a2)/generate_output.shape[0]                
                 rouge_scores += batch_score[0]
                 bleu1_scores += batch_score[1]
                 bleu4_scores += batch_score[2]
