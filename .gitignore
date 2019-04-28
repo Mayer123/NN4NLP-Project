@@ -7,3 +7,7 @@ best_model*
 nohup*
 *.log
 3_21_19.txt
+LM_data/
+experiments/
+prepro/
+glove*
