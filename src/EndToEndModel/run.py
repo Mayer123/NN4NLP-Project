@@ -203,7 +203,7 @@ def main(args):
             batch_loss.backward()
             #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
             optimizer.step()
-            reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
+            reset_embeddings(model.word_embeddings, embeddings, trained_idx)
             # if global_step % 100 == 0:
             #     logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
         logger.info("iter %r global_step %s : train loss/batch=%.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), time.time() - start_time))

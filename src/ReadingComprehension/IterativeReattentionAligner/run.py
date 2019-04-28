@@ -34,8 +34,8 @@ def add_arguments(parser):
     parser.add_argument('--dicts_dir', type=str, default=None, help='Directory containing the word dictionaries')
     parser.add_argument('--seed', type=int, default=6, help='Random seed for the experiment')
     parser.add_argument('--epochs', type=int, default=20, help='Train data iterations')
-    parser.add_argument('--train_batch_size', type=int, default=32, help='Batch size for training')
-    parser.add_argument('--dev_batch_size', type=int, default=32, help='Batch size for dev')
+    parser.add_argument('--train_batch_size', type=int, default=16, help='Batch size for training')
+    parser.add_argument('--dev_batch_size', type=int, default=16, help='Batch size for dev')
     parser.add_argument('--hidden_size', type=int, default=100, help='Hidden size for LSTM')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of layers for LSTM')
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
@@ -51,7 +51,7 @@ def add_arguments(parser):
     parser.add_argument('--mode', type=str, default='summary', help='mode of training') 
     parser.add_argument('--min_occur', type=str, default=100, help='minimum occurance of a word to be counted in common vocab')  
 
-def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
+def compute_scores(rouge, rrrouge, start, end, context, a1, a2, show=False):
     rouge_score = 0.0
     bleu1 = 0.0
     bleu4 = 0.0
@@ -68,7 +68,8 @@ def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
             predicted_span = ' '.join(context[i][start[i]:end[i]+1])
         if predicted_span in stoplist:
             predicted_span = 'NO-ANSWER-FOUND'
-        # print ('Extracted Span %s' % predicted_span)
+        if show:
+            print ('Extracted Span %s' % predicted_span)
         #print ("Sample output " + str(start[i]) +" " + str(end[i]) + " " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
         #score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
         #return score
@@ -95,7 +96,7 @@ def generate_answer(indices, id2words):
         words.append(id2words[idx])
     return words
 
-def generate_scores(rouge, generate_output, id2words, a1, a2):
+def generate_scores(rouge, generate_output, id2words, a1, a2, show=False):
     rouge_score = 0.0
     for i in range(0, len(generate_output)):
         pred = generate_answer(generate_output[i], id2words)
@@ -103,9 +104,10 @@ def generate_scores(rouge, generate_output, id2words, a1, a2):
         if pred_ans in stoplist or pred_ans == '':
             pred_ans = 'NO-ANSWER-FOUND'
         rouge_score += max(rouge.get_scores(pred_ans, a1[i])[0]['rouge-l']['f'], rouge.get_scores(pred_ans, a2[i])[0]['rouge-l']['f'])
-        # print ('Generated Output %s' % pred_ans)
-        # print (a1[i])
-        # print (a2[i])
+        if show:
+            print ('Generated Output %s' % pred_ans)
+            print (a1[i])
+            print (a2[i])
     return rouge_score
 
 def train_full(args):
@@ -204,7 +206,7 @@ def train_full(args):
             #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
             optimizer.step()
 
-            reset_embeddings(rc_model.word_embeddings[0], embeddings, trained_idx)
+            reset_embeddings(rc_model.word_embeddings, embeddings, trained_idx)
             if global_step % 100 == 0:
                 logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
             #rc_model.word_embeddings[0].weight.data[trained_idx] = fixed_embeddings
@@ -305,7 +307,7 @@ def main(args):
     else:
         model = torch.load(args.load_model)
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
                                                            factor=0.5, patience=0,
                                                            verbose=True)
@@ -361,12 +363,12 @@ def main(args):
                 a_vec = a_vec.cuda()
                 a_len = a_len.cuda()
             
-            batch_loss, CE_loss, s_index, e_index = model(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, c, a1, a2, a_vec, a_len)
+            batch_loss, CE_loss, s_index, e_index, gen_out = model(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, c, a1, a2, a_vec, a_len)
             train_loss += batch_loss.cpu().item()
             train_CE_loss += CE_loss.cpu().item()
-            #tmp = generate_scores(rouge, gen_out.tolist(), id2words, a1, a2)
-            #batch_score = compute_scores(rouge, rrrouge, s_index.tolist(), e_index.tolist(), c, a1, a2)
-            #train_rouge_score += batch_score[0]
+            tmp = generate_scores(rouge, gen_out.tolist(), id2words, a1, a2)
+            batch_score = compute_scores(rouge, rrrouge, s_index.tolist(), e_index.tolist(), c, a1, a2)
+            train_rouge_score += batch_score[0]
             optimizer.zero_grad()
             batch_loss.backward()
             #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
@@ -378,8 +380,9 @@ def main(args):
             # ps.print_stats()
             # print(s.getvalue())
             # return
-            # if global_step % 100 == 0:
-            #     logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
+            if global_step % 100 == 0:
+                print (gen_out.tolist())
+                logger.info("iter %r global_step %s : batch loss=%.4f, batch_rouge=%.4f, batch_gen=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), batch_score[0], tmp, time.time() - start_time))
         Train_Rouge.append(train_rouge_score/len(train))
         Train_Loss.append(train_CE_loss/len(train_loader))
         logger.info("iter %r global_step %s : train loss/batch=%.4f, train CE loss/batch %.4f, train rouge score %.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), train_CE_loss/len(train_loader), train_rouge_score/len(train), time.time() - start_time))
@@ -421,13 +424,13 @@ def main(args):
                     q_em = q_em.cuda()
                     q_mask = q_mask.cuda()
 
-                pred_start, pred_end, s_prob, e_prob = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask)
+                pred_start, pred_end, s_prob, e_prob, generate_output = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, c)
                 loss1 = nlloss(s_prob.cpu(), start)
                 loss2 = nlloss(e_prob.cpu(), end)
                 CE_loss = loss1 + loss2
                 dev_loss += CE_loss.cpu().item()
-                batch_score = compute_scores(rouge, rrrouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
-                #gen_rouge += generate_scores(rouge, generate_output.tolist(), id2words, a1, a2)
+                batch_score = compute_scores(rouge, rrrouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2, show=True)
+                gen_rouge += generate_scores(rouge, generate_output.tolist(), id2words, a1, a2, show=True)
                 rouge_scores += batch_score[0]
                 bleu1_scores += batch_score[1]
                 bleu4_scores += batch_score[2]

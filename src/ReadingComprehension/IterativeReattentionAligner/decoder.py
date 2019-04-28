@@ -55,13 +55,13 @@ class Decoder(nn.Module):
 
     def decode(self, prev_output, hidden, encoded_span, mask):
         attn_vector = self.attention(encoded_span, hidden, mask).unsqueeze(1)
-        attented_span = torch.bmm(attn_vector, encoded_span).squeeze()
+        attented_span = torch.bmm(attn_vector, encoded_span).squeeze(1)
         rnn_input = torch.cat([attented_span, prev_output], dim=1)        #  
         hidden = self.answer_generator(rnn_input, hidden)
         output = self.out_fc(torch.cat([hidden, prev_output, attented_span], dim=1))
         gen_prob = self.gen_fc(torch.cat([hidden, prev_output, attented_span], dim=1))
         gen_prob = F.softmax(torch.sigmoid(gen_prob), dim=1)
-        return output, hidden, attn_vector.squeeze(), gen_prob
+        return output, hidden, attn_vector.squeeze(1), gen_prob
 
     def generate(self, span, mask, span_idx):
         #span_idx[span_idx >= self.decode_dim] = 0
@@ -102,7 +102,7 @@ class Attention(nn.Module):
         query = self.query_layer(hidden)        # batch * 1 * hidden 
 
         energy = torch.tanh(key + query)   # batch * seq * decode_hidden
-        energy = self.energy_layer(energy).squeeze()
+        energy = self.energy_layer(energy).squeeze(2)
         energy.masked_fill_(mask.byte(), -1e7)
         attn = F.softmax(energy, dim=1)
 
