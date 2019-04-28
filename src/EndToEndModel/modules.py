@@ -49,11 +49,7 @@ class WordOverlapLoss(nn.Module):
 
 class EndToEndModel(nn.Module):
 	"""docstring for End2EndModel"""
-<<<<<<< HEAD
-	def __init__(self, ir_model, rc_model, ag_model, n_ctx_sents=3):
-=======
 	def __init__(self, ir_model, rc_model, n_ctx_sents=50, include_novelty_score=False):
->>>>>>> ahmed
 		super(EndToEndModel, self).__init__()
 		self.ir_model1 = ir_model.eval()
 		self.ir_model2 = ir_model
@@ -104,12 +100,8 @@ class EndToEndModel(nn.Module):
 	def forward(self, q, c, avec1, avec2, qlen, clen, alen, p_words, c_batch_size=512):
 		# print(q.shape, c.shape, a.shape)
 		selected_sents = []		
-<<<<<<< HEAD
-		string_sents = []
-=======
 		top_sents = []
 		top_sents_len = []
->>>>>>> ahmed
 		# print(torch.cuda.memory_allocated(0) / (1024)**3)
 		
 		# if q.shape[0] == 1:
@@ -122,11 +114,7 @@ class EndToEndModel(nn.Module):
 			c_scores = self.ir_model1.forward_singleContext(q, c, qlen, clen,
 														batch_size=c_batch_size)
 			
-<<<<<<< HEAD
-			_, topk_idx_ir1 = torch.topk(c_scores, self.n_ctx_sents*2, dim=1, sorted=False)
-=======
 			top_scores, topk_idx = torch.topk(c_scores, self.n_ctx_sents*2, dim=1, sorted=False)
->>>>>>> ahmed
 			
 			ctx1 = [c[topk_idx_ir1[i]] for i in range(len(c_scores))]
 			ctx_len1 = [clen[topk_idx_ir1[i]] for i in range(len(c_scores))]
@@ -153,16 +141,6 @@ class EndToEndModel(nn.Module):
 
 			selected_sents.append(ctx2)
 
-<<<<<<< HEAD
-
-			# sents = c[topk_idx]
-			# sent_lens = clen[topk_idx]
-			# sents = [sents[j,:sent_lens[j]] for j in range(self.n_ctx_sents)]
-			string_sent = [p_words[_idx] for _idx in topk_idx_ir1[topk_idx]]
-			string_sent = [w for s in string_sent for w in s]
-			string_sents.append(string_sent)
-
-=======
 		top_sents = torch.stack(top_sents, dim=0)
 		top_sents_len = torch.stack(top_sents_len, dim=0)
 
@@ -177,7 +155,6 @@ class EndToEndModel(nn.Module):
 		loss = torch.mean(loss)
 
 		return loss
->>>>>>> ahmed
 		# for i in range(len(c_scores)):
 		# 	_, topk_idx = torch.topk(c_scores[i], self.n_ctx_sents, dim=0)
 

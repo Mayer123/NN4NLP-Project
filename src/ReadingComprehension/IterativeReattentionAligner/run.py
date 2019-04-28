@@ -17,7 +17,7 @@ from ReadingComprehension.IterativeReattentionAligner.encoder import MnemicReade
 from EndToEndModel.answer_generator import AnswerGenerator
 from ReadingComprehension.IterativeReattentionAligner.e2e_encoder import MnemicReader as e2e_MnemicReader
 import cProfile, pstats, io
-from ReadingComprehension.IterativeReattentionAligner.data_utils import *
+from ReadingComprehension.IterativeReattentionAligner.utils import *
 from InformationRetrieval.AttentionRM.modules import AttentionRM
 from EndToEndModel.modules import EndToEndModel
 from nltk.translate.bleu_score import sentence_bleu
@@ -131,15 +131,16 @@ def train_full(args):
         training_data = pickle.load(f)
     with open(args.dev_file, 'rb') as f:
         dev_data = pickle.load(f)
-    w2i, tag2i, ner2i, c2i, common_vocab = build_fulltext_dicts(training_data, args.min_occur)
     
-    w2i['<pad>'] = 0
-    w2i['<unk>'] = 1
-    tag2i['<pad>'] = 0 
-    tag2i['<unk>'] = 1
+    w2i = {'<pad>': 0,
+            '<unk>' : 1}
+    tag2i = w2i.copy()
+    ner2i = w2i.copy()
+    c2i = w2i.copy()
+ 
     logger.info('Converting to index')
-    train = convert_fulltext(training_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=100, build_chunks=True)
-    dev = convert_fulltext(dev_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=100, build_chunks=True)
+    train = convert_fulltext(training_data, w2i, tag2i, ner2i, c2i)
+    dev = convert_fulltext(dev_data, w2i, tag2i, ner2i, c2i, update_dict=False)
     train = FulltextDataset(train, args.train_batch_size)
     dev = FulltextDataset(dev, args.dev_batch_size)
     train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=1, num_workers=4, collate_fn=mCollateFn)
