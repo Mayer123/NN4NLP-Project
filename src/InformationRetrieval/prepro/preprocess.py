@@ -72,8 +72,8 @@ def getIRPretrainData(data_gen):
 	np.random.seed(0)
 	for qidx, _, _, didxs, dscores in data_gen:
 		count += 1
-		# if count == 1000:
-		# 	break
+		if count == 10:
+			break
 		sys.stdout.write("\r%d" % count)
 		sys.stdout.flush()	
 

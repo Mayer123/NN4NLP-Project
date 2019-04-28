@@ -267,7 +267,7 @@ def build_dicts(data):
     char_dict = {}
     common_vocab = {}
     for i, (k, v) in enumerate(w2i.most_common()):
-        if v >= 20:
+        if v >= 0:
             common_vocab[k] = i + 4                         # <SOS> for 2 <EOS> for 3
     for i, (k, v) in enumerate(w2i.most_common()):
         word_dict[k] = i + 4                         # <SOS> for 2 <EOS> for 3
@@ -302,7 +302,7 @@ def convert_data(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=-1):
         answer1 = sample['answers'][0].lower()
         answer2 = sample['answers'][1].lower()
         answer_tokens = word_tokenize(answer1) if random.random() < 0.5 else word_tokenize(answer2)
-        answer_vector = [2]+[common_vocab[w] if w in common_vocab else 1 for w in answer_tokens]+[3]
+        answer_vector = [common_vocab[w] if w in common_vocab else 1 for w in answer_tokens]+[3]
         ans_start = sample['start_index']
         ans_end = sample['end_index']
         if max_len != -1 and len(context_vector) > max_len:
@@ -379,5 +379,5 @@ def pad_answer(answers):
     return torch.as_tensor(ans_batch)
 
 def reset_embeddings(word_embeddings, fixed_embeddings, trained_idx):
-    word_embeddings.weight.data[trained_idx] = torch.FloatTensor(fixed_embeddings[trained_idx]).cuda()
+    word_embeddings.weight.data[trained_idx] = torch.FloatTensor(fixed_embeddings[trained_idx]).to(word_embeddings.weight.data.device)
     return 

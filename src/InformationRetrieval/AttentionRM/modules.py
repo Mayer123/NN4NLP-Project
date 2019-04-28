@@ -103,15 +103,17 @@ class AttentionRM(nn.Module):
 		del qng
 		# print(attendedD.shape)
 		if self.use_rnn:
-			encoded,_ = self.evidence_collector(attendedD)
+			encoded,(encoded_h, _) = self.evidence_collector(attendedD)
 			# print(encoded.shape)
 			encoded = self.evidence_proj(encoded)
+			# encoded_h = encoded_h.transpose(0,1).view(encoded_h.shape[0], -1)
 		else:
 			encoded = self.evidence_collector(attendedD.transpose(1,2))			
 			# print('encoded size:',encoded.storage().size() * encoded.storage().element_size()/(1024**3))
 			# print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
 			# print ('encoded.shape:', encoded.shape)						
 			encoded = encoded.transpose(1,2)
+			# encoded_h = torch.mean(encoded, dim=1)
 
 		s = self.summarizer(q_emb, qlen)
 		s = s.expand(s.shape[0], encoded.shape[1], s.shape[2])	
