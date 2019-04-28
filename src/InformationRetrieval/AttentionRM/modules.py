@@ -21,17 +21,28 @@ class GaussianKernel(object):
 
 class AttentionRM(nn.Module):
     """docstring for ConvKNRM"""
-    def __init__(self, init_emb=None, emb_trainable=True, vocab_size=None, 
+
+    def __init__(self, emb_layer=None, pos_emb_layer=None, init_emb=None, emb_trainable=True, vocab_size=None, 
                     pos_vocab_size=None, emb_dim=100, dropout=0.3,
                     use_rnn=True):
         super(AttentionRM, self).__init__()
-        if init_emb is not None:
+        if emb_layer is not None:
+            self.emb = emb_layer
+            emb_dim = self.emb.weight.data.shape[1]
+
+        elif init_emb is not None:
             self.emb = nn.Embedding.from_pretrained(init_emb, 
                                         freeze=(not emb_trainable))
         else:
             self.emb = nn.Embedding(vocab_size, emb_dim)
-        self.pos_emb = nn.Embedding(pos_vocab_size, emb_dim)
-        self.emb_proj = nn.Linear(2*emb_dim, emb_dim)
+
+        if pos_emb_layer is not None:
+            self.pos_emb = pos_emb_layer
+            pos_emb_dim = self.pos_emb.weight.data.shape[1]
+        else:
+            self.pos_emb = nn.Embedding(pos_vocab_size, pos_emb_dim)
+        
+        self.emb_proj = nn.Linear(emb_dim+pos_emb_dim, emb_dim)
 
         self.use_rnn = use_rnn
         if use_rnn:
@@ -92,17 +103,15 @@ class AttentionRM(nn.Module):
         del qng
         # print(attendedD.shape)
         if self.use_rnn:
-            encoded,(encoded_h, _) = self.evidence_collector(attendedD)
+            encoded,_ = self.evidence_collector(attendedD)
             # print(encoded.shape)
             encoded = self.evidence_proj(encoded)
-            # encoded_h = encoded_h.transpose(0,1).view(encoded_h.shape[0], -1)
         else:
             encoded = self.evidence_collector(attendedD.transpose(1,2))         
             # print('encoded size:',encoded.storage().size() * encoded.storage().element_size()/(1024**3))
             # print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
             # print ('encoded.shape:', encoded.shape)                       
             encoded = encoded.transpose(1,2)
-            # encoded_h = torch.mean(encoded, dim=1)
 
         s = self.summarizer(q_emb, qlen)
         s = s.expand(s.shape[0], encoded.shape[1], s.shape[2])  
@@ -155,8 +164,8 @@ class AttentionRM(nn.Module):
         q = self.embed(q)
         d = self.embed(d)
 
-        scores = []
-        for i in range(q.shape[0]):
+        scores = []     
+        for i in range(q.shape[0]):         
             q_ = q[i, :qlen[i]]
             q_ = q_.expand(d.shape[0], -1, -1)
 
