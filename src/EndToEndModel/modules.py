@@ -98,7 +98,23 @@ class EndToEndModel(nn.Module):
             # sents = c[topk_idx]
             # sent_lens = clen[topk_idx]
             # sents = [sents[j,:sent_lens[j]] for j in range(self.n_ctx_sents)]
-            string_sent = [p_words[_idx] for _idx in topk_idx_ir1[topk_idx]]
+            print("topk_idx: ")
+            print(topk_idx)
+            print(p_words, type(topk_idx))
+            print(topk_idx_ir1)
+            print(type(topk_idx_ir1))
+            print(topk_idx_ir1.shape)
+            print("----------------------------------------------------------")
+            # print(p_words[4])
+            # print(p_words[3])
+            # print(p_words[2])
+
+            string_sent = []
+            for _idx in topk_idx_ir1[topk_idx]:
+                string_sent.append([p_words[_idx]])
+            print("**********************************************************")
+            print(string_sent)
+
             string_sent = [w for s in string_sent for w in s]
             string_sents.append(string_sent)
 

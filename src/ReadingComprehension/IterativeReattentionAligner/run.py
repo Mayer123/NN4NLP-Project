@@ -149,7 +149,7 @@ def train_full(args):
     rc_model = e2e_MnemicReader(input_size, args.hidden_size, args.num_layers,
                             args.pos_emb_size, embeddings, len(tag2i)+2, len(w2i)+4,
                             args.emb_dropout, args.rnn_dropout)
-    ir_model = AttentionRM(rc_model.word_embeddings[0].weight, rc_model.pos_emb, pos_vocab_size=len(tag2i))
+    ir_model = AttentionRM(rc_model.word_embeddings, rc_model.pos_emb, pos_vocab_size=len(tag2i))
     ag_model = AnswerGenerator(input_size, args.hidden_size, args.num_layers, rc_model.word_embeddings, embeddings.shape[1], len(common_vocab)+4, embeddings.shape[0], args.emb_dropout, args.rnn_dropout)
     model = EndToEndModel(ir_model, rc_model, ag_model)
 
