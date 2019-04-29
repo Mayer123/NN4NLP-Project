@@ -1,226 +1,83 @@
 import sys
 sys.path.append('../')
-import numpy as np
 import torch
-from torch import nn
-from torch.nn import functional as F
-from utils import utils
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.autograd import Variable
+import numpy as np
+from ReadingComprehension.IterativeReattentionAligner.decoder import Decoder
+from allennlp.modules.elmo import Elmo, batch_to_ids
 
-def getNext(logits, n_next=1, gumbel=True, sample_dist=False):
-            if gumbel:
-                logit = F.gumbel_softmax(logits[-1])
-            else:
-                logit = logits[-1]
-                logit = F.softmax(logit, dim=1)
+options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
+weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
 
-            if sample_dist:
-                pred_seq = torch.multinomial(logit, n_next).squeeze().long()
-            else:               
-                pred_seq = torch.max(logit, 1)[1]                
-                pred_seq = pred_seq.squeeze().long()
-            return pred_seq
+class AnswerGenerator(nn.Module):
+        ## model(c_vec, c_pos, c_ner, c_em, c_mask, q_vec, q_pos, q_ner, q_em, q_mask, start, end)
+        def __init__(self, input_size, hidden_size, num_layers, word_embeddings, emb_size, vocab_size, full_vocab_size, emb_dropout=0.0, rnn_dropout=0.0):
+                super(AnswerGenerator, self).__init__()
+                self.num_layers = num_layers
+                self.rnn = nn.ModuleList()
 
-class Attention(nn.Module):
-        """docstring for Attention"""
-        def __init__(self, input_dim, proj_dim, att_dropout=0.3, proj_dropout=0.1):
-                super(Attention, self).__init__()
-                self.k_proj = nn.Linear(input_dim, proj_dim, bias=False)
-                self.q_proj = nn.Linear(input_dim, proj_dim, bias=False)
-                self.v_proj = nn.Linear(input_dim, proj_dim, bias=False)
-                self.proj_dropout = nn.Dropout(proj_dropout)
-                self.att_dropout = nn.Dropout(att_dropout)
+                self.vocab_size = vocab_size
+                self.full_vocab_size = full_vocab_size
+                self.word_embeddings = word_embeddings
+                self.emb_size = emb_size
+                # self.emb_size = word_embeddings.shape[1]
+                # self.word_embeddings = torch.nn.Embedding(word_embeddings.shape[0], word_embeddings.shape[1],
+                #                                                                                         padding_idx=0)
+                # self.full_vocab_size = word_embeddings.shape[0]
+                # self.word_embeddings.weight.data.copy_(torch.from_numpy(word_embeddings))
+                # self.word_embeddings = nn.Sequential(
+                #         self.word_embeddings,
+                #         nn.Dropout(emb_dropout)
+                #         )
 
-        def forward(self, k, q, v, k_lens):
-                enc_k = self.proj_dropout(self.k_proj(k))
-                enc_q = self.proj_dropout(self.k_proj(q)).unsqueeze(1)
-                enc_v = self.proj_dropout(self.k_proj(v))
+                self.rnn_dropout = nn.Dropout(rnn_dropout)
+
+                for i in range(num_layers):
+                        lstm = nn.LSTM(input_size, hidden_size, num_layers=1, bidirectional=True, batch_first=True)
+                        self.rnn.append(lstm)
+
+                self.generative_decoder = Decoder(self.emb_size+2048, hidden_size, self.word_embeddings, self.emb_size, self.vocab_size, self.full_vocab_size, 15, 0.4)
+                self.gen_loss = nn.NLLLoss(ignore_index=0)
+                self.elmo = Elmo(options_file, weight_file, 2, dropout=0)
+
+        def forward(self, span, a_vec, raw_span):
+                #span_vec = span
+                span_vec = self.word_embeddings(span)
+                character_ids = batch_to_ids(raw_span).cuda()
+
+                elmo_embeddings = self.elmo(character_ids)
+                print(span_vec.shape)
+                print(elmo_embeddings['elmo_representations'][0].shape)
+                print("------------------------------")
+                elmo_representations = torch.cat([span_vec]+elmo_embeddings['elmo_representations'], dim=2)
+                generate_output = self.generative_decoder(elmo_representations, a_vec, elmo_embeddings['mask'], span)
+                batch_size, target_iter = a_vec.shape
+                gen_out = torch.zeros(batch_size, target_iter).to(generate_output.device)
+                for i in range(batch_size):
+                        gen_out[i,:] = generate_output[i,:,:].max(1)[1]
+
+                print(generate_output.shape)
+                generate_output = generate_output[:,1:,:].contiguous()
+                generate_output = generate_output.view(generate_output.shape[0]*generate_output.shape[1], generate_output.shape[2])
+                print(generate_output.shape)
                 
-                mask = utils.output_mask(k_lens, maxlen=k.shape[1]).unsqueeze(2)
-                E = utils.getAlignmentMatrix(enc_k, enc_q, mask=mask)
-                attended = torch.bmm(enc_v.transpose(1,2), E).squeeze(2)
-                attended = self.att_dropout(attended)
+                generate_output = F.softmax(generate_output, dim=1)
+                eps = 1e-8
+                generate_output = (1-eps)*generate_output + eps*torch.min(generate_output[generate_output != 0])
+                generate_loss = self.gen_loss(torch.log(generate_output), a_vec[:,1:].contiguous().view(-1))
+                #print (generate_output.max(1)[1])
+                #print (a_vec[:,1:].contiguous().view(-1))
+                loss = generate_loss
+                return loss, gen_out
 
-                return attended, E      
-                
-class Encoder(nn.Module):
-        """docstring for GRUEncoder"""
-        def __init__(self, input_dim, hidden_size, n_hidden):
-                super(GRUEncoder, self).__init__()
-                self.input_dim = input_dim
-                self.hidden_size = hidden_size
+        def evaluate(self, span, raw_span):
+                #span_vec = span
+                span_vec = self.word_embeddings(span)
+                character_ids = batch_to_ids(raw_span).cuda()
 
-        def forward(self, x, xlen):
-                xlen, sorted_idx = torch.sort(xlen, descending=True)
-                _, rev_sorted_idx = torch.sort(sorted_idx)
-                
-                x = x[sorted_idx]
-                x = nn.utils.rnn.pack_padded_sequence(x, xlen)
-                out, hidden = self.rnn(x)
-                
-                out, _ = nn.utils.rnn.pad_packed_sequence(out)
-
-                out = out[rev_sorted_idx]
-                hidden = hidden.transpose(0,1)
-                hidden = hidden.view(hidden.shape[0], -1)
-
-                return out, hidden
-
-class GRUEncoder(Encoder):
-        """docstring for GRUEncoder"""
-        def __init__(self, input_dim, hidden_size, n_hidden):
-                super(GRUEncoder, self).__init__(input_dim, hidden_size, n_hidden)
-                self.rnn = nn.GRU(input_dim, hidden_size, n_hidden, batch_first=True)
-
-class seq2seqAG(nn.Module):
-        """docstring for seq2seq"""
-        def __init__(self, encoder, decoder):
-                super(seq2seq, self).__init__()
-                self.encoder = encoder
-                self.decoder = decoder
-
-        def forward(self, c, clen, a, sos_idx):
-                encoded, h = self.encoder(c, clen)
-                self.decoder(encoded, clen, a, sos_idx, initial_hidden=h)
-                
-
-class GRUDecoder(nn.Module):
-        """docstring for GRUDecoder"""
-        def __init__(self, emb_dim, hidden_size, n_hidden, vocab_size, word_embeddings=None,
-                                        tf_rate=0.9, dropout=0.3, use_attention=False):
-                super(GRUDecoder, self).__init__()
-                
-                if word_embeddings is None:
-                        self.word_embeddings = nn.Embedding(vocab_size, emb_dim)
-                else:
-                        self.word_embeddings = word_embeddings
-                self.emb_dropout = nn.Dropout(dropout)
-
-                self.hidden_size = hidden_size                                                                                          
-                self.output = nn.Linear(hidden_size, vocab_size)
-
-                self.use_attention = use_attention
-                if use_attention:                       
-                        self.attention = Attention(hidden_size, hidden_size)
-                        self.rnn_cells = [nn.GRUCell(emb_dim+hidden_size, hidden_size)]
-                else:
-                        self.rnn_cells = [nn.GRUCell(emb_dim, hidden_size)]
-                self.dropout = nn.Dropout(dropout)
-
-                self.rnn_cells = nn.ModuleList(self.rnn_cells + 
-                                                                [nn.GRUCell(hidden_size, hidden_size) for i in range(n_hidden-1)])
-
-                self.tf_rate = tf_rate  
-
-        def forward(self, encoded, encoded_len, x, sos_idx, generated_seqlen=10, gumbel=False,
-                                initial_hidden=None):
-                # x.shape = [seq_len, batch]
-                # encoded.shape = [batch, seq_len', fdim]
-
-                nbatches = encoded.shape[0]
-
-                if initial_hidden is None:
-                        initial_hidden = torch.zeros(1, self.hidden_size)
-
-                hidden_states = [initial_hidden.contiguous() 
-                                                                                        for cell in self.rnn_cells]
-                h0 = hidden_states[-1]
-                logits = []
-
-                if x is not None:                       
-                        T = x.shape[0]
-                else:
-                        T = generated_seqlen
-
-                for t in range(T):
-                        if t == 0:
-                                seq = torch.zeros(nbatches).to(encoded.device).long() + sos_idx
-                        else:
-                                pred_seq = getNext(logits, gumbel=gumbel, sample_dist=False).to(seq.device)
-                                if self.training:
-                                        seq = x[t-1]
-                                        if self.tf_rate > 0:
-                                                flip = torch.bernoulli(torch.zeros(seq.shape[0]) + self.tf_rate).long().to(seq.device)
-
-                                                seq = seq * (flip) + pred_seq * (1-flip)
-                                else:
-                                        seq = pred_seq
-
-                        h = self.word_embeddings(seq)
-                        if self.use_attention:
-                                ctx,_ = self.attention(encoded, h0, encoded, encoded_len)
-                                h = torch.cat((h, ctx), dim=1)
-                        h = self.dropout(h)
-
-                        for i in range(len(self.rnn_cells)):
-                                h = self.rnn_cells[i](self.dropout(h), hidden_states[i])
-                                hidden_states[i] = h
-
-                        logit = self.output(h)
-                        logits.append(logit)
-                logits = torch.stack(logits, dim=0)
-
-                return logits
-
-class LSTMDecoder(nn.Module):
-        """docstring for GRUDecoder"""
-        def __init__(self, emb_dim, hidden_size, n_hidden, vocab_size, word_embeddings=None,
-                                        tf_rate=0.9, dropout=0.3):
-                super(GRUDecoder, self).__init__()
-                
-                if word_embeddings is None:
-                        self.word_embeddings = nn.Embedding(vocab_size, emb_dim)
-                else:
-                        self.word_embeddings = word_embeddings
-
-                self.rnn_cells = nn.ModuleList([nn.LSTMCell(emb_dim, hidden_size)] +
-                                                                                [nn.LSTMCell(hidden_size, hidden_size) for i in range(n_hidden-1)])
-                self.initial_c = nn.ModuleList([nn.Parameter(torch.zeros(1, hidden_size)) for i in range(n_hidden)])
-                self.output = nn.Linear(hidden_size, vocab_size)
-                self.tf_rate = tf_rate  
-
-        def forward(self, encoder_out, x, xlen, sos_idx, generated_seqlen=None, gumbel=False):
-                T = x.shape[0]
-                nbatches = x.shape[1]
-
-                hidden_states = [(encoder_out.contiguous(), self.initial_c[i].expand(nbatches,-1).contiguous()) 
-                                                                for i in range(len(self.rnn_cells))]
-                h0, c0 = hidden_states[-1]
-                logits = []
-
-                if generated_seqlen is not None:
-                        T = generated_seqlen
-
-                for t in range(T):
-                        if t == 0:
-                                seq = torch.zeros(nbatches).to(encoder_out.device).long() + sos_idx
-                        else:
-                                pred_seq = getNext(logits, gumbel=gumbel, sample_dist=False).to(seq.device)
-                                if self.training:
-                                        seq = x[t-1]
-                                        if self.tf_rate > 0:
-                                                flip = torch.bernoulli(torch.zeros(seq.shape[0]) + self.tf_rate).long().to(seq.device)
-
-                                                seq = seq * (flip) + pred_seq * (1-flip)
-                                else:
-                                        seq = pred_seq
-
-                        embed = self.word_embeddings(seq)
-                        h = embed
-                        for i in range(len(self.rnn_cells)):
-                                h = self.rnn_cells[i](h, hidden_states[i])
-                                hidden_states[i] = h
-
-                        logit = self.output(h)
-                        logits.append(logit)
-                logits = torch.stack(logits, dim=0)
-                return logits           
-
-if __name__ == '__main__':
-        enc_out = torch.rand(2, 3)
-        x = torch.randint(6, size=(4, 2)).long()
-
-        decoder = GRUDecoder(5, 3, 2, 6)
-
-        out = decoder(enc_out, x, torch.tensor([4, 2]).long(), 2, gumbel=True)
-        print(out.shape)
-        print(out)
+                elmo_embeddings = self.elmo(character_ids)
+                elmo_representations = torch.cat([span_vec]+elmo_embeddings['elmo_representations'], dim=2)
+                generate_output = self.generative_decoder.generate(elmo_representations, elmo_embeddings['mask'], span)
+                return generate_output

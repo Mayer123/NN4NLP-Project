@@ -70,6 +70,7 @@ class EndToEndModel(nn.Module):
             c_scores = self.ir_model1.forward_singleContext(q, c, qlen, clen,
                                                         batch_size=c_batch_size)
             
+            print("Getting top %d" %(self.n_ctx_sents*2))
             _, topk_idx_ir1 = torch.topk(c_scores, self.n_ctx_sents*2, dim=1, sorted=False)
             
             ctx1 = [c[topk_idx_ir1[i]] for i in range(len(c_scores))]
@@ -77,46 +78,31 @@ class EndToEndModel(nn.Module):
             
             ctx1 = torch.stack(ctx1, dim=0)
             ctx_len1 = torch.stack(ctx_len1, dim=0)         
-        
+        print("==> CTX1 is ", len(ctx1))
         for i in range(len(ctx1)):
-            print("==> CTX1 is ", len(ctx1))
+    
             c_scores = self.ir_model2.forward_singleContext(q[[i]], ctx1[i], qlen[[i]], ctx_len1[i],
                                                             batch_size=c_batch_size)            
             
-            _, topk_idx = torch.topk(c_scores[0], self.n_ctx_sents, dim=0)          
+            print("====> ", c_scores.shape)
+            _, topk_idx = torch.topk(c_scores[0], self.n_ctx_sents, dim=0)  
 
             sents = ctx1[i, topk_idx]           
+            # print(sents)
             sent_lens = ctx_len1[i, topk_idx]
             sents = [sents[j,:sent_lens[j]] for j in range(self.n_ctx_sents)]
-
             ctx2 = torch.cat(sents, dim=0)
-
 
             selected_sents.append(ctx2)
 
-
-            # sents = c[topk_idx]
-            # sent_lens = clen[topk_idx]
-            # sents = [sents[j,:sent_lens[j]] for j in range(self.n_ctx_sents)]
-            print("topk_idx: ")
-            print(topk_idx)
-            print(p_words, type(topk_idx))
-            print(topk_idx_ir1)
-            print(type(topk_idx_ir1))
-            print(topk_idx_ir1.shape)
-            print("----------------------------------------------------------")
-            # print(p_words[4])
-            # print(p_words[3])
-            # print(p_words[2])
-
             string_sent = []
-            for _idx in topk_idx_ir1[topk_idx]:
+            for _idx in topk_idx_ir1[i][topk_idx]:
                 string_sent.append([p_words[_idx]])
+            
+            string_sent = [w for s in string_sent for w in s]
             print("**********************************************************")
             print(string_sent)
-
-            string_sent = [w for s in string_sent for w in s]
-            string_sents.append(string_sent)
+            string_sents.append(string_sent[0])
 
         # for i in range(len(c_scores)):
         #   _, topk_idx = torch.topk(c_scores[i], self.n_ctx_sents, dim=0)
@@ -145,6 +131,10 @@ class EndToEndModel(nn.Module):
         print (sidx, eidx)
         raw_span = []
         for i in range(len(string_sents)):
+            print("*************")
+            print(len(string_sents[i]))
+            print( sidx[i] , eidx[i], eidx[i] - sidx[i])
+            print(len(string_sents[i][sidx[i]:eidx[i]+1]))
             raw_span.append(['<sos>'] + string_sents[i][sidx[i]:eidx[i]+1] + ['<eos>'])
             print (len(raw_span[-1]))
 
