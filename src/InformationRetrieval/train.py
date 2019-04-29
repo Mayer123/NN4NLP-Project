@@ -103,16 +103,27 @@ def train(args):
     logger.info('-' * 100)
     logger.info('Loading data')    
 
-    w2i = {'<pad>': 0,
-            '<unk>' : 1}
-    pos2i = w2i.copy()
+    if args.word_dict != '':
+        print(args.word_dict)
+        with open(args.word_dict) as f:
+            w2i = json.load(f)
+    if args.pos_dict != '':
+        print(args.pos_dict)
+        with open(args.pos_dict) as f:
+            pos2i = json.load(f)
+    else:
+        w2i = {'<pad>': 0,
+                '<unk>' : 1}
+        pos2i = w2i.copy()
 
-    train_data_gen = convert_data(args.train_file, w2i, pos2i)
-    Q_train, P_train, N_train, y_train = getIRPretrainData(train_data_gen)
+    logger.info('loading train data')    
+    train_data_gen = convert_data(args.train_file, w2i, pos2i, update_dict=(len(w2i) <= 2))
+    Q_train, P_train, N_train, y_train = getIRPretrainData(train_data_gen, nques=5000)
     train_ds = PairwiseDataset(Q_train, P_train, N_train, y_train)
     train_dl = D.DataLoader(train_ds, batch_size=args.train_batch_size, shuffle=True,
                             collate_fn=mCollateFn)    
 
+    logger.info('loading dev data')
     dev_data_gen = convert_data(args.dev_file, w2i, pos2i, update_dict=False)
     Q_dev, P_dev, N_dev, y_dev = getIRPretrainData(dev_data_gen)
     dev_ds = PairwiseDataset(Q_dev, P_dev, N_dev, y_dev)
@@ -206,7 +217,10 @@ def train(args):
 
             scheduler.step(avg_dev_metric)
 
-            logger.info("avg_dev_loss = %.4f avg_dev_metric = %.4f" % (avg_dev_loss, 
+            logger.info("avg_train_loss = %.4f avg_train_metric = %.4f avg_dev_loss = %.4f avg_dev_metric = %.4f" % (
+                                                                       np.mean(Train_Loss),
+                                                                       np.mean(Train_metric),
+                                                                       avg_dev_loss, 
                                                                        avg_dev_metric))
             if avg_dev_loss < best:
                 best = avg_dev_loss
@@ -227,6 +241,9 @@ if __name__ == '__main__':
     parser.add_argument('--save_results', action='store_true')
     parser.add_argument('--model_name', type=str, default="convKNRM.pt", help='path to the log file')
     parser.add_argument('--load_model', type=str, default="", help='path to the log file')
+    parser.add_argument('--word_dict', type=str, default="", help='path to the log file')
+    parser.add_argument('--pos_dict', type=str, default="", help='path to the log file')
+
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

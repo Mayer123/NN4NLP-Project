@@ -7,7 +7,7 @@ from nltk.tokenize import word_tokenize, sent_tokenize
 from sklearn.preprocessing import StandardScaler
 import itertools
 
-def convert_data(datafile, w2i={}, pos2i={}, update_dict=True):	
+def convert_data(datafile, w2i={}, pos2i={}, update_dict=True, all_sents=False):	
 	if datafile.split('.')[-1] == 'json':
 		with open(datafile) as f:
 			data = json.load(f)
@@ -47,6 +47,12 @@ def convert_data(datafile, w2i={}, pos2i={}, update_dict=True):
 			passages = q["full_text_scores"]
 			passage_idxs = []
 			passage_scores = []
+			# if all_sents:
+			# 	for para_i in range(len(context)):
+			# 		para = context[para_i]
+			# 		for sent_i in range(para):
+			# 			sent = para[sent_i]
+
 			for (paraI, sentI, score) in passages:
 				passage_scores.append(score)
 				words = context[paraI][sentI][1]
@@ -59,9 +65,9 @@ def convert_data(datafile, w2i={}, pos2i={}, update_dict=True):
 					posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
 				passage_idxs.append(np.stack((widx, posidx), axis=1))
 			if len(passage_idxs) > 0:
-				yield(qidx, a1idx, a2idx, passage_idxs, passage_scores)
+				yield(qidx, a1idx, a2idx, passage_idxs, passage_scores)			
 
-def getIRPretrainData(data_gen):
+def getIRPretrainData(data_gen, pos_thres=100, npairs=10, nques=-1):
 	Qs = []
 	Ps = []
 	Ns = []
@@ -72,7 +78,7 @@ def getIRPretrainData(data_gen):
 	np.random.seed(0)
 	for qidx, _, _, didxs, dscores in data_gen:
 		count += 1
-		if count == 10:
+		if count == nques:
 			break
 		sys.stdout.write("\r%d" % count)
 		sys.stdout.flush()	
@@ -85,7 +91,7 @@ def getIRPretrainData(data_gen):
 									key=lambda i: dscores[i],
 									reverse=True)		
 		# idxs = np.arange(len(dscores))
-		posIdx = score_sorted_idx[:100]
+		posIdx = score_sorted_idx[:pos_thres]
 		negIdx = score_sorted_idx[len(posIdx):]
 
 		np.random.shuffle(posIdx)
@@ -100,7 +106,7 @@ def getIRPretrainData(data_gen):
 		# np.random.shuffle(idxs)
 		pairs_gen = itertools.product(posIdx, negIdx)
 		# np.random.shuffle(pairs)
-		pairs = [next(pairs_gen) for i in range(min(len(posIdx) * len(negIdx), 200))]
+		pairs = [next(pairs_gen) for i in range(min(len(posIdx) * len(negIdx), npairs))]
 
 		for pi, ni in pairs:			
 			Qs.append(np.array(qidx))

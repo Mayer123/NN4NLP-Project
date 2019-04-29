@@ -5,6 +5,14 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from utils import utils
+import matplotlib.pyplot as plt
+
+def plotAttn(attn):
+    attn = np.array([x.detach().cpu().numpy() for x in attn])
+    plt.pcolormesh(attn)
+    plt.savefig('attn.png')
+    plt.clf()
+    plt.close()
 
 def getNext(logits, n_next=1, gumbel=True, sample_dist=False):
 	    if gumbel:
@@ -42,10 +50,10 @@ class Attention(nn.Module):
 
 		return attended, E	
 		
-class Encoder(nn.Module):
+class RNNEncoder(nn.Module):
 	"""docstring for GRUEncoder"""
 	def __init__(self, input_dim, hidden_size, n_hidden):
-		super(GRUEncoder, self).__init__()
+		super(RNNEncoder, self).__init__()
 		self.input_dim = input_dim
 		self.hidden_size = hidden_size
 
@@ -54,34 +62,35 @@ class Encoder(nn.Module):
 		_, rev_sorted_idx = torch.sort(sorted_idx)
 		
 		x = x[sorted_idx]
-		x = nn.utils.rnn.pack_padded_sequence(x, xlen)
-		out, hidden = self.rnn(x)
+		x = nn.utils.rnn.pack_padded_sequence(x, xlen, batch_first=True)
+		x, hidden = self.rnn(x)
 		
-		out, _ = nn.utils.rnn.pad_packed_sequence(out)
+		x, _ = nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
 
-		out = out[rev_sorted_idx]
+		x = x[rev_sorted_idx]
 		hidden = hidden.transpose(0,1)
-		hidden = hidden.view(hidden.shape[0], -1)
+		hidden = hidden.contiguous().view(hidden.shape[0], -1)
 
-		return out, hidden
+		return x, hidden
 
-class GRUEncoder(Encoder):
+class GRUEncoder(RNNEncoder):
 	"""docstring for GRUEncoder"""
-	def __init__(self, input_dim, hidden_size, n_hidden):
+	def __init__(self, input_dim, hidden_size, n_hidden, bidirectional=False):
 		super(GRUEncoder, self).__init__(input_dim, hidden_size, n_hidden)
-		self.rnn = nn.GRU(input_dim, hidden_size, n_hidden, batch_first=True)
+		self.rnn = nn.GRU(input_dim, hidden_size, n_hidden, batch_first=True, 
+							bidirectional=bidirectional)
 
 class seq2seqAG(nn.Module):
 	"""docstring for seq2seq"""
 	def __init__(self, encoder, decoder):
-		super(seq2seq, self).__init__()
+		super(seq2seqAG, self).__init__()
 		self.encoder = encoder
 		self.decoder = decoder
 
 	def forward(self, c, clen, a, sos_idx):
 		encoded, h = self.encoder(c, clen)
-		self.decoder(encoded, clen, a, sos_idx, initial_hidden=h)
-		
+		logits = self.decoder(encoded, clen, a, sos_idx, initial_hidden=h)
+		return logits
 
 class GRUDecoder(nn.Module):
 	"""docstring for GRUDecoder"""

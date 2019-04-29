@@ -40,6 +40,7 @@ def add_arguments(parser):
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
     parser.add_argument('--pos_emb_size', type=int, default=50, help='Embedding size for pos tags')
     parser.add_argument('--ner_emb_size', type=int, default=50, help='Embedding size for ner')
+    parser.add_argument('--init_lr', type=float, default=0.0008, help='Dropout rate for embedding layers')
     parser.add_argument('--emb_dropout', type=float, default=0.3, help='Dropout rate for embedding layers')
     parser.add_argument('--rnn_dropout', type=float, default=0.3, help='Dropout rate for RNN layers')
     parser.add_argument('--log_file', type=str, default="RMR.log", help='path to the log file')
@@ -49,6 +50,7 @@ def add_arguments(parser):
     parser.add_argument('--RL_loss_after', type=int, default=5, help='path to the log file')
     parser.add_argument('--load_ir_model', type=str, default="", help='path to the log file')
     parser.add_argument('--mode', type=str, default='summary', help='path to the log file')  
+    parser.add_argument('--use_generator', action='store_true', help='path to the log file')  
 
 def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
     rouge_score = 0.0
@@ -313,14 +315,15 @@ def main(args):
         model = MnemicReader(input_size, args.hidden_size, args.num_layers, 
                             args.char_emb_size, args.pos_emb_size, args.ner_emb_size, 
                             embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, len(common_vocab)+4,
-                            args.emb_dropout, args.rnn_dropout)
+                            args.emb_dropout, args.rnn_dropout, use_generator=args.use_generator)
     else:
         model = torch.load(args.load_model)
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=0.0001)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', 
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.init_lr, weight_decay=0.0001)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
                                                            factor=0.5, patience=0,
                                                            verbose=True)
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5, gamma=0.5, last_epoch=-1)
     if use_cuda:
         torch.cuda.manual_seed(args.seed)
         model.cuda()
@@ -340,12 +343,13 @@ def main(args):
         train_rouge_score = 0.0
         gen_rouge = 0.0
         start_time = time.time()
-        model.train()
+        model.train()        
         local_step = 0
         if 1 == 1:            
             if ITER >= args.RL_loss_after:
                 model.use_RLLoss = True
             t = tqdm.tqdm(train_loader)
+            t.set_description('Epoch %d'%ITER)
             for batch in t:
                 # print(torch.cuda.memory_allocated(0) / (1024)**3)
                 # pr.enable()
@@ -382,13 +386,17 @@ def main(args):
                 #train_rouge_score += batch_score[0]
                 optimizer.zero_grad()
                 batch_loss.backward()
-                #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
+                
+                torch.nn.utils.clip_grad_norm_(model.parameters(),1)
+
                 optimizer.step()
                 reset_embeddings(model.word_embeddings[0], embeddings, trained_idx)
 
                 train_loss += float(batch_loss.detach().cpu())
                 train_CE_loss += float(CE_loss.detach().cpu())
-                gen_rouge += generate_scores(rouge, generate_output.detach().cpu().tolist(), 
+
+                if args.use_generator:
+                    gen_rouge += generate_scores(rouge, generate_output.detach().cpu().tolist(), 
                                                 id2words, a1, a2)/generate_output.shape[0]
                 # pr.disable()
                 # s = io.StringIO()
@@ -401,7 +409,8 @@ def main(args):
                 t.set_postfix(loss=train_loss/local_step, gen_rouge=gen_rouge/local_step)
             Train_Rouge.append(gen_rouge/len(train))
             Train_Loss.append(train_CE_loss/len(train_loader))
-            scheduler.step(train_loss/local_step)
+            # scheduler.step(train_loss/local_step)
+            # scheduler.step()
             logger.info("iter %r global_step %s : train loss/batch=%.4f, train CE loss/batch %.4f, train rouge score %.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), train_CE_loss/len(train_loader), train_rouge_score/len(train), time.time() - start_time))
         model.eval()
         with torch.no_grad():
@@ -451,7 +460,8 @@ def main(args):
                 
                 batch_score = compute_scores(rouge, rrrouge, pred_start.detach().cpu().tolist(), 
                                                 pred_end.detach().cpu().tolist(), c, a1, a2)
-                gen_rouge += generate_scores(rouge, generate_output.detach().cpu().tolist(), 
+                if args.use_generator:
+                    gen_rouge += generate_scores(rouge, generate_output.detach().cpu().tolist(), 
                                                 id2words, a1, a2)/generate_output.shape[0]                
                 rouge_scores += batch_score[0]
                 bleu1_scores += batch_score[1]
