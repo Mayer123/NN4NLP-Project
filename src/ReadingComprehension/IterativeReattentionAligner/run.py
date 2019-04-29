@@ -34,12 +34,12 @@ def add_arguments(parser):
     parser.add_argument('--dicts_dir', type=str, default=None, help='Directory containing the word dictionaries')
     parser.add_argument('--seed', type=int, default=6, help='Random seed for the experiment')
     parser.add_argument('--epochs', type=int, default=20, help='Train data iterations')
-    parser.add_argument('--train_batch_size', type=int, default=16, help='Batch size for training')
-    parser.add_argument('--dev_batch_size', type=int, default=16, help='Batch size for dev')
+    parser.add_argument('--train_batch_size', type=int, default=24, help='Batch size for training')
+    parser.add_argument('--dev_batch_size', type=int, default=24, help='Batch size for dev')
     parser.add_argument('--hidden_size', type=int, default=100, help='Hidden size for LSTM')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of layers for LSTM')
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
-    parser.add_argument('--pos_emb_size', type=int, default=20, help='Embedding size for pos tags')
+    parser.add_argument('--pos_emb_size', type=int, default=50, help='Embedding size for pos tags')
     parser.add_argument('--ner_emb_size', type=int, default=50, help='Embedding size for ner')
     parser.add_argument('--emb_dropout', type=float, default=0.3, help='Dropout rate for embedding layers')
     parser.add_argument('--rnn_dropout', type=float, default=0.3, help='Dropout rate for RNN layers')
@@ -282,7 +282,7 @@ def main(args):
         w2i, tag2i, ner2i, c2i, common_vocab = build_dicts(training_data)
     print (len(w2i), len(tag2i), len(ner2i), len(c2i), len(common_vocab))
     train = convert_data(training_data, w2i, tag2i, ner2i, c2i, common_vocab, 800)
-    dev = convert_data(dev_data, w2i, tag2i, ner2i, c2i, common_vocab)
+    dev = convert_data(dev_data, w2i, tag2i, ner2i, c2i, common_vocab, 800)
     #dev = list(dev)[0:32]
     id2words = {}
     for k, v in common_vocab.items():
@@ -307,7 +307,7 @@ def main(args):
     else:
         model = torch.load(args.load_model)
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=0.0001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0005, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
                                                            factor=0.5, patience=0,
                                                            verbose=True)
@@ -363,10 +363,10 @@ def main(args):
                 a_vec = a_vec.cuda()
                 a_len = a_len.cuda()
             
-            batch_loss, CE_loss, s_index, e_index, gen_out = model(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, c, a1, a2, a_vec, a_len)
+            batch_loss, CE_loss, s_index, e_index = model(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, c, a1, a2, a_vec, a_len)
             train_loss += batch_loss.cpu().item()
             train_CE_loss += CE_loss.cpu().item()
-            tmp = generate_scores(rouge, gen_out.tolist(), id2words, a1, a2)
+            #tmp = generate_scores(rouge, gen_out.tolist(), id2words, a1, a2)
             batch_score = compute_scores(rouge, rrrouge, s_index.tolist(), e_index.tolist(), c, a1, a2)
             train_rouge_score += batch_score[0]
             optimizer.zero_grad()
@@ -381,8 +381,8 @@ def main(args):
             # print(s.getvalue())
             # return
             if global_step % 100 == 0:
-                print (gen_out.tolist())
-                logger.info("iter %r global_step %s : batch loss=%.4f, batch_rouge=%.4f, batch_gen=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), batch_score[0], tmp, time.time() - start_time))
+                #print (gen_out.tolist())
+                logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
         Train_Rouge.append(train_rouge_score/len(train))
         Train_Loss.append(train_CE_loss/len(train_loader))
         logger.info("iter %r global_step %s : train loss/batch=%.4f, train CE loss/batch %.4f, train rouge score %.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), train_CE_loss/len(train_loader), train_rouge_score/len(train), time.time() - start_time))
@@ -424,13 +424,13 @@ def main(args):
                     q_em = q_em.cuda()
                     q_mask = q_mask.cuda()
 
-                pred_start, pred_end, s_prob, e_prob, generate_output = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, c)
+                pred_start, pred_end, s_prob, e_prob = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, c)
                 loss1 = nlloss(s_prob.cpu(), start)
                 loss2 = nlloss(e_prob.cpu(), end)
                 CE_loss = loss1 + loss2
                 dev_loss += CE_loss.cpu().item()
-                batch_score = compute_scores(rouge, rrrouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2, show=True)
-                gen_rouge += generate_scores(rouge, generate_output.tolist(), id2words, a1, a2, show=True)
+                batch_score = compute_scores(rouge, rrrouge, pred_start.tolist(), pred_end.tolist(), c, a1, a2)
+                #gen_rouge += generate_scores(rouge, generate_output.tolist(), id2words, a1, a2, show=True)
                 rouge_scores += batch_score[0]
                 bleu1_scores += batch_score[1]
                 bleu4_scores += batch_score[2]

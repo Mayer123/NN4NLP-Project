@@ -6,8 +6,9 @@ import sys
 from nltk.tokenize import word_tokenize, sent_tokenize
 from sklearn.preprocessing import StandardScaler
 import itertools
+import tqdm
 
-def convert_data(datafile, w2i={}, pos2i={}, update_dict=True):	
+def build_dict(datafile, w2i={}, pos2i={}, update_dict=True):	
 	if datafile.split('.')[-1] == 'json':
 		with open(datafile) as f:
 			data = json.load(f)
@@ -15,7 +16,74 @@ def convert_data(datafile, w2i={}, pos2i={}, update_dict=True):
 		with open(datafile, 'rb') as f:
 			data = pickle.load(f)
 	context_cache = {}
-	for cid in data:
+	for cid in tqdm.tqdm(data):
+		context = data[cid]['full_text']
+		for q in data[cid]['qaps']:
+			qwords = q['question_tokens']
+			qpos = q['question_pos']
+			awords = [q['answer1_tokens'],
+					  q['answer2_tokens']]
+
+			if update_dict:
+				qidx = [w2i.setdefault(w, len(w2i)) for w in qwords]
+				qposidx = [pos2i.setdefault(p, len(pos2i)) for p in qpos]
+				a1idx = [w2i.setdefault(w, len(w2i)) for w in awords[0]]
+				a2idx = [w2i.setdefault(w, len(w2i)) for w in awords[1]]
+			else:
+				qidx = [w2i.get(w, w2i['<unk>']) for w in qwords]
+				qposidx = [pos2i.get(p, pos2i['<unk>']) for p in qpos]
+				a1idx = [w2i.get(w, w2i['<unk>']) for w in awords[0]]
+				a2idx = [w2i.get(w, w2i['<unk>']) for w in awords[1]]		
+			qidx = np.stack((qidx, qposidx), axis=1)
+			if cid in context_cache:
+				(passage_idxs, passage_context) = context_cache[cid]
+			else:
+				passage_idxs = []
+				passage_context = []
+				for i, para in enumerate(context):
+					for j,sent in enumerate(para):
+						passage_context.append(sent)
+						words = sent[1]
+						pos = sent[2]
+						if update_dict:
+							widx = [w2i.setdefault(w, len(w2i)) for w in words]
+							posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
+						else:
+							widx = [w2i.get(w, w2i['<unk>']) for w in words]
+							posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
+						# if len(widx) > max_len:
+						# 	widx = widx[:max_len]
+						# 	posidx = posidx[:max_len]
+						passage_idxs.append(np.stack((widx, posidx), axis=1))
+				context_cache[cid] = (passage_idxs, passage_context)		
+			# passages = q["full_text_scores"]
+			# passage_idxs = []
+			# passage_scores = []
+			# passage_context = []
+			# for (paraI, sentI, score) in passages:
+			# 	passage_scores.append(score)
+			# 	words = context[paraI][sentI][1]
+			# 	pos = context[paraI][sentI][2]
+			# 	passage_context.append(context[paraI][sentI])
+			# 	if update_dict:
+			# 		widx = [w2i.setdefault(w, len(w2i)) for w in words]
+			# 		posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
+			# 	else:
+			# 		widx = [w2i.get(w, w2i['<unk>']) for w in words]
+			# 		posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
+			# 	passage_idxs.append(np.stack((widx, posidx), axis=1))
+			
+	return w2i, pos2i
+
+def convert_data(datafile, w2i={}, pos2i={}, update_dict=True, max_len=200):	
+	if datafile.split('.')[-1] == 'json':
+		with open(datafile) as f:
+			data = json.load(f)
+	if datafile.split('.')[-1] == 'pickle':
+		with open(datafile, 'rb') as f:
+			data = pickle.load(f)
+	context_cache = {}
+	for cid in tqdm.tqdm(data):
 		context = data[cid]['full_text']
 		for q in data[cid]['qaps']:
 			qwords = q['question_tokens']
@@ -43,23 +111,72 @@ def convert_data(datafile, w2i={}, pos2i={}, update_dict=True):
 			# 	with open(context) as f:
 			# 		context = json.load(f)
 			# 	context_cache[q['_id']] = context
-
-			passages = q["full_text_scores"]
-			passage_idxs = []
+			if cid in context_cache:
+				(passage_idxs, passage_context) = context_cache[cid]
+			else:
+				passage_idxs = []
+				passage_context = []
+				for i, para in enumerate(context):
+					for j,sent in enumerate(para):
+						passage_context.append(sent)
+						words = sent[1]
+						pos = sent[2]
+						if update_dict:
+							widx = [w2i.setdefault(w, len(w2i)) for w in words]
+							posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
+						else:
+							widx = [w2i.get(w, w2i['<unk>']) for w in words]
+							posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
+						if len(widx) > max_len:
+							widx = widx[:max_len]
+							posidx = posidx[:max_len]
+						passage_idxs.append(np.stack((widx, posidx), axis=1))
+				context_cache[cid] = (passage_idxs, passage_context)		
+				# for (paraI, sentI, score) in passages:
+				# 	passage_scores.append(score)
+				# 	words = context[paraI][sentI][1]
+				# 	pos = context[paraI][sentI][2]
+				# 	if update_dict:
+				# 		widx = [w2i.setdefault(w, len(w2i)) for w in words]
+				# 		posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
+				# 	else:
+				# 		widx = [w2i.get(w, w2i['<unk>']) for w in words]
+				# 		posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
+				# 	passage_idxs.append(np.stack((widx, posidx), axis=1))
+				
 			passage_scores = []
-			for (paraI, sentI, score) in passages:
-				passage_scores.append(score)
-				words = context[paraI][sentI][1]
-				pos = context[paraI][sentI][2]
-				if update_dict:
-					widx = [w2i.setdefault(w, len(w2i)) for w in words]
-					posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
-				else:
-					widx = [w2i.get(w, w2i['<unk>']) for w in words]
-					posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
-				passage_idxs.append(np.stack((widx, posidx), axis=1))
+			score_dict = {}
+			for (paraI, sentI, score) in q["full_text_scores"]:
+				score_dict[(paraI, sentI)] = score
+			for i, para in enumerate(context):
+				for j,sent in enumerate(para):
+					if (i, j) in score_dict:
+						passage_scores.append(score_dict[(i, j)])
+					else:
+						passage_scores.append(0.0)
+			# passages = q["full_text_scores"]
+			# passage_idxs = []
+			# passage_scores = []
+			# passage_context = []
+			# for (paraI, sentI, score) in passages:
+			# 	passage_scores.append(score)
+			# 	words = context[paraI][sentI][1]
+			# 	pos = context[paraI][sentI][2]
+			# 	passage_context.append(context[paraI][sentI])
+			# 	if update_dict:
+			# 		widx = [w2i.setdefault(w, len(w2i)) for w in words]
+			# 		posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
+			# 	else:
+			# 		widx = [w2i.get(w, w2i['<unk>']) for w in words]
+			# 		posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
+			# 	passage_idxs.append(np.stack((widx, posidx), axis=1))
+			qo = {}
+			for k, v in q.items():
+				if k == 'full_text_scores':
+					continue
+				qo[k] = v
 			if len(passage_idxs) > 0:
-				yield(qidx, a1idx, a2idx, passage_idxs, passage_scores)
+				yield(cid, qo, passage_context, qidx, a1idx, a2idx, passage_idxs, passage_scores)
 
 def getIRPretrainData(data_gen):
 	Qs = []
