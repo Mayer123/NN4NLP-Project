@@ -35,22 +35,43 @@ def build_dict(datafile, w2i={}, pos2i={}, update_dict=True):
 				a1idx = [w2i.get(w, w2i['<unk>']) for w in awords[0]]
 				a2idx = [w2i.get(w, w2i['<unk>']) for w in awords[1]]		
 			qidx = np.stack((qidx, qposidx), axis=1)
-			passages = q["full_text_scores"]
-			passage_idxs = []
-			passage_scores = []
-			passage_context = []
-			for (paraI, sentI, score) in passages:
-				passage_scores.append(score)
-				words = context[paraI][sentI][1]
-				pos = context[paraI][sentI][2]
-				passage_context.append(context[paraI][sentI])
-				if update_dict:
-					widx = [w2i.setdefault(w, len(w2i)) for w in words]
-					posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
-				else:
-					widx = [w2i.get(w, w2i['<unk>']) for w in words]
-					posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
-				passage_idxs.append(np.stack((widx, posidx), axis=1))
+			if cid in context_cache:
+				(passage_idxs, passage_context) = context_cache[cid]
+			else:
+				passage_idxs = []
+				passage_context = []
+				for i, para in enumerate(context):
+					for j,sent in enumerate(para):
+						passage_context.append(sent)
+						words = sent[1]
+						pos = sent[2]
+						if update_dict:
+							widx = [w2i.setdefault(w, len(w2i)) for w in words]
+							posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
+						else:
+							widx = [w2i.get(w, w2i['<unk>']) for w in words]
+							posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
+						# if len(widx) > max_len:
+						# 	widx = widx[:max_len]
+						# 	posidx = posidx[:max_len]
+						passage_idxs.append(np.stack((widx, posidx), axis=1))
+				context_cache[cid] = (passage_idxs, passage_context)		
+			# passages = q["full_text_scores"]
+			# passage_idxs = []
+			# passage_scores = []
+			# passage_context = []
+			# for (paraI, sentI, score) in passages:
+			# 	passage_scores.append(score)
+			# 	words = context[paraI][sentI][1]
+			# 	pos = context[paraI][sentI][2]
+			# 	passage_context.append(context[paraI][sentI])
+			# 	if update_dict:
+			# 		widx = [w2i.setdefault(w, len(w2i)) for w in words]
+			# 		posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
+			# 	else:
+			# 		widx = [w2i.get(w, w2i['<unk>']) for w in words]
+			# 		posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
+			# 	passage_idxs.append(np.stack((widx, posidx), axis=1))
 			
 	return w2i, pos2i
 

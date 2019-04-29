@@ -312,6 +312,10 @@ def score_sentences(args):
     pos2i = w2i.copy()
     w2i, pos2i = build_dict(args.train_file, w2i, pos2i)
     print (len(w2i), len(pos2i))
+    with open('fulltext_dict.json', 'w') as fout:
+        json.dump(w2i, fout)
+    with open('fulltext_pos_dict.json', 'w') as fout:
+        json.dump(pos2i, fout)
     train = convert_data(args.train_file, w2i, pos2i, update_dict=False)    
     train = FulltextDataset(train, args.train_batch_size)
     
