@@ -310,7 +310,8 @@ def convert_data(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=-1):
                 new_start = len(context_vector) - max_len
                 if new_start > sample['start_index']:
                     print('This context is too long')
-                    print (current_len)
+                    continue
+                    #print (current_len)
                 context_vector = context_vector[new_start:new_start+max_len]
                 context_pos_vec = context_pos_vec[new_start:new_start+max_len]
                 context_ner_vec = context_ner_vec[new_start:new_start+max_len]

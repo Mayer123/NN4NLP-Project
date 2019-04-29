@@ -23,7 +23,7 @@ class AttentionRM(nn.Module):
 	"""docstring for ConvKNRM"""
 
 	def __init__(self, emb_layer=None, pos_emb_layer=None, init_emb=None, emb_trainable=True, vocab_size=None, 
-					pos_vocab_size=None, emb_dim=100, dropout=0.3,
+					pos_vocab_size=None, emb_dim=100, pos_emb_dim=50, dropout=0.3,
 					use_rnn=True):
 		super(AttentionRM, self).__init__()
 		if emb_layer is not None:

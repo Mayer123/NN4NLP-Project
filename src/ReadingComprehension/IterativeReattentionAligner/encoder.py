@@ -202,18 +202,18 @@ class MnemicReader(nn.Module):
 
         #elmo_embeddings = self.elmo(character_ids)
         #final_context = torch.cat([final_context]+elmo_embeddings['elmo_representations'], dim=2)
-        generate_output = self.generative_decoder(final_context, a_vec, c_mask, c_vec)
-        batch_size, target_iter = a_vec.shape
-        gen_out = torch.zeros(batch_size, target_iter).to(generate_output.device)
-        for i in range(batch_size):
-            gen_out[i,:] = generate_output[i,:,:].max(1)[1]
-        generate_output = generate_output[:,1:,:].contiguous().view(-1, generate_output.shape[-1])
-        generate_output = F.softmax(generate_output, dim=1)
-        eps = 1e-8
-        generate_output = (1-eps)*generate_output + eps*torch.min(generate_output[generate_output != 0])
-        loss = self.gen_loss(torch.log(generate_output), a_vec[:,1:].contiguous().view(-1))
+        # generate_output = self.generative_decoder(final_context, a_vec, c_mask, c_vec)
+        # batch_size, target_iter = a_vec.shape
+        # gen_out = torch.zeros(batch_size, target_iter).to(generate_output.device)
+        # for i in range(batch_size):
+        #     gen_out[i,:] = generate_output[i,:,:].max(1)[1]
+        # generate_output = generate_output[:,1:,:].contiguous().view(-1, generate_output.shape[-1])
+        # generate_output = F.softmax(generate_output, dim=1)
+        # eps = 1e-8
+        # generate_output = (1-eps)*generate_output + eps*torch.min(generate_output[generate_output != 0])
+        # loss = self.gen_loss(torch.log(generate_output), a_vec[:,1:].contiguous().view(-1))
         if not self.use_RLLoss:
-            return loss, loss, s_index, e_index, gen_out
+            return loss, loss, s_index, e_index
 
         #return loss
         #s_prob = torch.exp(s_prob)
@@ -263,8 +263,8 @@ class MnemicReader(nn.Module):
 
         #elmo_embeddings = self.elmo(character_ids)
         #final_context = torch.cat([final_context]+elmo_embeddings['elmo_representations'], dim=2)
-        generate_output = self.generative_decoder.generate(final_context, c_mask, c_vec)
-        return s_index, e_index, torch.log(s_prob), torch.log(e_prob), generate_output
+        #generate_output = self.generative_decoder.generate(final_context, c_mask, c_vec)
+        return s_index, e_index, torch.log(s_prob), torch.log(e_prob)
 
 if __name__ == '__main__':
     seq_len = 60

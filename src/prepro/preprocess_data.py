@@ -7,11 +7,12 @@ import tqdm
 import spacy
 import en_core_web_sm
 from nltk.stem.porter import PorterStemmer
+import pickle
 nlp = en_core_web_sm.load()
 ps = PorterStemmer()
 
 MAX_SPAN_LEN = 6      # what number should we set here ? 
-stoplist = set(['the','a','.',',', '...', '..'])
+stoplist = set(['the','a','.',',', '...', '..', '....', '.....', '......'])
 
 def get_ngrams(passage, n):
     ngrams_list = []
@@ -113,12 +114,163 @@ def process_data(filename):
     new_name = filename.split('.')[0] + '_index.json'
     with open(new_name, "w") as fout:
         json.dump(data, fout, indent=4)
-      
+
+def checkstop(sent):
+    for w in sent:
+        if w not in stoplist:
+            return False
+    return True
+
+def extract_span(filename):
+    rouge = Rouge()
+    with open(filename, 'rb') as f:
+        data = pickle.load(f)
+    count = 0
+    for cid in tqdm.tqdm(data):
+        context = data[cid]['full_text']
+        for q in data[cid]['qaps']:
+            if len(q["full_text_scores"]) == 0:
+                count += 1
+                print ('fuck', q['question_tokens'], ' '.join(q['answer1_tokens']), ' '.join(q['answer2_tokens']))
+                continue
+            sorted_scores = sorted(q["full_text_scores"], key=lambda s: s[2],reverse=True)
+            paraId = sorted_scores[0][0]
+            sentId = sorted_scores[0][1]
+            best_sent = context[paraId][sentId][1]
+            if checkstop(best_sent) and len(sorted_scores) > 1:
+                i = 1
+                while checkstop(best_sent) and i < len(sorted_scores):
+                    paraId = sorted_scores[i][0]
+                    sentId = sorted_scores[i][1]
+                    best_sent = context[paraId][sentId][1]
+                    i += 1
+            if checkstop(best_sent):
+                count += 1
+                print ('shit', q['question_tokens'])
+                continue
+            max_span_len = min(len(best_sent), max(len(q['answer1_tokens']), len(q['answer2_tokens'])))
+            candidates = get_ngrams(best_sent, max_span_len)
+            scores = {}
+            answers = [' '.join(q['answer1_tokens']), ' '.join(q['answer2_tokens'])]
+            for span in candidates:
+                if span in stoplist:
+                    continue
+                try:
+                    scores[span] = max([rouge.get_scores(span, ans)[0]['rouge-l']['f'] for ans in answers])
+                except:
+                    print ('what the fuck is this', span)
+            sorted_scores = sorted(scores.items(), key=operator.itemgetter(1), reverse=True)
+            best_candidate = sorted_scores[0][0].split(' ')
+            ans_len = len(best_candidate)
+        
+            start_index = -1
+            end_index = -1
+            for i in range(0, len(best_sent) - ans_len + 1):
+                if best_sent[i: i+ans_len] == best_candidate:
+                    start_index = i
+                    end_index = i+ans_len-1
+            if start_index == -1 or end_index == -1:
+                print ('this should not happen')
+            q['best_span'] = best_candidate
+            q['best_indices'] = (paraId, sentId, start_index, end_index)
+            #sample['chosen_answer'] = best_candidate
+            #sample['start_index'] = start_index
+            #sample['end_index'] = end_index
+    print (count)
 
 def main():
     process_data('narrativeqa_summary_train.json')
     process_data('narrativeqa_summary_dev.json')
     process_data('narrativeqa_summary_test.json')
 
+def fulltext_spans():
+    extract_span('../../prepro/narrativeqa_dev_fulltext.pickle')
+
+def baseline_spans(filename):
+    rouge = Rouge()
+    with open(filename, 'rb') as f:
+        data = pickle.load(f)
+    new_data = []
+    for sample in tqdm.tqdm(data):
+        for ss in sample['context']:
+            if len(ss[1]) > 10:
+                print (ss[1], len(ss[1]))
+        if len(sample['scores']) == 0:
+            print (sample['qaps']['question'])
+            print (sample['qaps']['_id'])
+        raw_scores = [(i, s) for i, s in enumerate(sample['scores'])]
+        sorted_scores = sorted(raw_scores, key=lambda s: s[1],reverse=True)
+        max_ind = sorted_scores[0][0]
+        best_sent = sample['context'][max_ind][1]
+        if checkstop(best_sent) and len(sorted_scores) > 1:
+            i = 1
+            while checkstop(best_sent) and i < len(sorted_scores):
+                max_ind = sorted_scores[i][0]
+                best_sent = sample['context'][max_ind][1]
+                i += 1
+        if checkstop(best_sent):
+            print ('This sample is fucked')
+            continue
+        max_span_len = min(len(best_sent), max(len(sample['qaps']['answer1_tokens']), len(sample['qaps']['answer2_tokens'])))
+        candidates = get_ngrams(best_sent, max_span_len)
+        scores = {}
+        answers = [' '.join(sample['qaps']['answer1_tokens']), ' '.join(sample['qaps']['answer2_tokens'])]
+        for span in candidates:
+            if span in stoplist:
+                continue
+            try:
+                scores[span] = max([rouge.get_scores(span, ans)[0]['rouge-l']['f'] for ans in answers])
+            except:
+                print ('what the fuck is this', span)
+        sorted_scores = sorted(scores.items(), key=operator.itemgetter(1), reverse=True)
+        best_candidate = sorted_scores[0][0].split(' ')
+        ans_len = len(best_candidate)
+        
+        start_index = -1
+        end_index = -1
+        for i in range(0, len(best_sent) - ans_len + 1):
+            if best_sent[i: i+ans_len] == best_candidate:
+                start_index = i
+                end_index = i+ans_len-1
+        if start_index == -1 or end_index == -1:
+            print ('this should not happen')
+        newsample = {}
+        newsample['_id'] = sample['id']
+        newsample['question'] = sample['qaps']['question']
+        newsample['question_tokens'] = sample['qaps']['question_tokens']
+        newsample['question_pos'] = sample['qaps']['question_pos']
+        newsample['question_ner'] = sample['qaps']['question_ner']
+        newsample['answers'] = sample['qaps']['answers']
+        newsample['answer1_tokens'] = sample['qaps']['answer1_tokens']
+        newsample['answer2_tokens'] = sample['qaps']['answer2_tokens']
+        newsample['chosen_answer'] = best_candidate
+        context_tokens = []
+        context_pos = []
+        context_ner = []
+        for i, sent in enumerate(sample['context']):
+            if i == max_ind:
+                start_index += len(context_tokens)
+                end_index += len(context_tokens)
+            context_tokens.extend(sent[1])
+            context_pos.extend(sent[2])
+            context_ner.extend(sent[3])
+        em_features = get_em_features(context_tokens, newsample['question_tokens'])
+        newsample['context_em_feature'] = em_features[0]
+        newsample['question_em_feature'] = em_features[1]
+        newsample['start_index'] = start_index
+        newsample['end_index'] = end_index
+        assert context_tokens[start_index:end_index+1] == best_candidate
+        newsample['context_tokens'] = context_tokens
+        newsample['context_pos'] = context_pos
+        newsample['context_ner'] = context_ner
+        new_data.append(newsample)
+    # with open('../../prepro/retrived_dev_index.json', 'w') as fout:
+    #     json.dump(new_data, fout)
+
+
+
 if __name__ == '__main__':
-    main()
+    #main()
+    #fulltext_spans()
+    baseline_spans('../../prepro/retrived_dev.pickle')
+
