@@ -312,7 +312,12 @@ def main(args):
     #use_cuda = False
     input_size = embeddings.shape[1] + args.char_emb_size * 2 + args.pos_emb_size + args.ner_emb_size + 1
     if args.load_model == '':
-        model = MnemicReader(input_size, args.hidden_size, args.num_layers, 
+        if args.use_rmr_lite:
+            model = e2e_MnemicReader(input_size, args.hidden_size, args.num_layers,
+                            args.pos_emb_size, embeddings, len(tag2i)+2, len(w2i)+4,
+                            args.emb_dropout, args.rnn_dropout)
+        else:
+            model = MnemicReader(input_size, args.hidden_size, args.num_layers, 
                             args.char_emb_size, args.pos_emb_size, args.ner_emb_size, 
                             embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, len(common_vocab)+4,
                             args.emb_dropout, args.rnn_dropout, use_generator=args.use_generator)
@@ -381,7 +386,10 @@ def main(args):
                     end = end.cuda()
                     a_vec = a_vec.cuda()
                 
-                batch_loss, CE_loss, s_index, e_index, generate_output = model(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, c, a1, a2, a_vec)                
+                if args.use_rmr_lite:
+                    batch_loss, CE_loss, s_index, e_index = model(c_vec, c_pos, c_lens, q_vec, q_pos, q_lens, context, a_vec, start, end, context, a1, a2, a_vec, alen)
+                else:                    
+                    batch_loss, CE_loss, s_index, e_index, generate_output = model(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, c, a1, a2, a_vec)                
                 #batch_score = compute_scores(rouge, rrrouge, s_index.tolist(), e_index.tolist(), c, a1, a2)
                 #train_rouge_score += batch_score[0]
                 optimizer.zero_grad()
@@ -451,7 +459,10 @@ def main(args):
                     q_em = q_em.cuda()
                     q_mask = q_mask.cuda()
 
-                pred_start, pred_end, s_prob, e_prob, generate_output = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask)
+                if use use_rmr_lite:
+                    pred_start, pred_end, s_prob, e_prob, generate_output = model.evaluate(c_vec, c_pos, c_mask, q_vec, q_pos, q_mask)
+                else:    
+                    pred_start, pred_end, s_prob, e_prob, generate_output = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask)
                 
                 loss1 = nlloss(s_prob.cpu(), start)
                 loss2 = nlloss(e_prob.cpu(), end)

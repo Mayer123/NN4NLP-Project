@@ -50,7 +50,7 @@ class WordOverlapLoss(nn.Module):
 class MnemicReader(nn.Module):
     ## model(c_vec, c_pos, c_ner, c_em, c_mask, q_vec, q_pos, q_ner, q_em, q_mask, start, end)
     def __init__(self, input_size, hidden_size, num_layers, pos_emb_dim, word_embeddings,
-                    num_pos, vocab_size, emb_dropout=0.0, rnn_dropout=0.0):
+                    num_pos, vocab_size, emb_dropout=0.0, rnn_dropout=0.0, loss='word_overlap'):
         super(MnemicReader, self).__init__()
         self.num_layers = num_layers
         self.rnn = nn.ModuleList()
@@ -71,7 +71,10 @@ class MnemicReader(nn.Module):
         #self.answerPointerModel = answerPointerModel()    
         self.aligningBlock = IterativeAligner( 2 * hidden_size, hidden_size, 1, 3, dropout=rnn_dropout)
 
-        self.loss = WordOverlapLoss()
+        if loss == 'cross_entropy':
+            self.loss = nn.CrossEntropyLoss()
+        else:
+            self.loss = WordOverlapLoss()
         self.DCRL_loss = DCRLLoss(4)
         #self.weight_a = torch.pow(torch.randn(1, requires_grad=True), 2)
         #self.weight_b = torch.pow(torch.randn(1, requires_grad=True), 2)
@@ -171,7 +174,10 @@ class MnemicReader(nn.Module):
         
         return s_prob, e_prob, probs, final_context
 
-    def forward(self, c_vec, c_pos, c_lens, q_vec, q_pos, q_lens, context, a_vec, alen):
+    def forward(self, c_vec, c_pos, c_mask, q_vec, q_pos, q_mask, context, a_vec, start, end, context, a1, a2, a_vec, alen):
+        c_lens = torch.sum(c_mask, dim=1)
+        q_lens = torch.sum(q_mask, dim=1)
+
         s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos,c_lens, 
                                                                         q_vec, q_pos, q_lens)
         #print (s_prob.shape, e_prob.shape)
@@ -182,48 +188,40 @@ class MnemicReader(nn.Module):
         #print (end)
         #s_prob = torch.log(s_prob)
         #e_prob = torch.log(e_prob)
-        context_len = s_prob.shape[1]
+        s_prob = torch.squeeze(s_prob)
+        e_prob = torch.squeeze(e_prob)
+
+        context_len = final_context.shape[1]
+
         max_idx = torch.argmax(probs, dim=1)
-        start = max_idx // context_len
-        end = max_idx % context_len
+        s_index = max_idx // context_len
+        e_index = max_idx % context_len
 
-        pred_a = [c_vec[i, start[i]:end[i]] for i in range(len(start))]
-        
-        pred_a_len = [len(a) for a in pred_a]
-        padded_pred_a = torch.zeros(len(pred_a), max(pred_a_len), 
-                                    dtype=c_vec.dtype).to(c_vec.device)
-        for (i,x) in enumerate(pred_a):
-            padded_pred_a[i,:pred_a_len[i]] = x
+        if isinstance(self.loss, nn.CrossEntropyLoss):
+            loss1 = self.loss(torch.log(s_prob), start)
+            loss2 = self.loss(torch.log(e_prob), end)
+            loss = loss1 + loss2
+        else:
+            pred_a = [c_vec[i, s_index[i]:e_index[i]] for i in range(len(s_index))]
             
-        pred_a_emb = self.word_embeddings(padded_pred_a)
-        a_emb = self.word_embeddings(a_vec)
+            pred_a_len = [len(a) for a in pred_a]
+            padded_pred_a = torch.zeros(len(pred_a), max(pred_a_len), 
+                                        dtype=c_vec.dtype).to(c_vec.device)
+            for (i,x) in enumerate(pred_a):
+                padded_pred_a[i,:pred_a_len[i]] = x
+                
+            pred_a_emb = self.word_embeddings(padded_pred_a)
+            a_emb = self.word_embeddings(a_vec)
 
-        loss = self.loss(a_emb, pred_a_emb, alen, start-end)
-        loss = torch.mean(loss)
+            loss = self.loss(a_emb, pred_a_emb, alen, s_index-e_index)
+            loss = torch.mean(loss)
 
         if not self.use_RLLoss:
-            return loss, loss, start, end
-
-        #return loss
-        #s_prob = torch.exp(s_prob)
-        #e_prob = torch.exp(e_prob)
-        # loss1 = self.loss(s_prob, start)
-        # loss2 = self.loss(e_prob, end)
-
-        #s_prob = torch.nn.functional.softmax(s_prob, dim=1)
-        #e_prob = torch.nn.functional.softmax(e_prob, dim=1)
-        
-        #s_prob = s_prob * c_mask.float()
-        #e_prob = e_prob * c_mask.float()
+            return loss, loss, s_index, e_index
 
         probs = torch.exp(probs)
         rl_loss = self.DCRL_loss(probs, s_prob, e_prob, context_len, start, end, context, a1, a2)
-        #_, s_index = torch.max(torch.squeeze(s_prob), dim=1)
-        #_, e_index = torch.max(torch.squeeze(e_prob), dim=1)
-        #print (loss1, loss2)
-        #loss = (start - s_index)**2 + (end - e_index)**2
-        #loss = (loss1+loss2)*self.weight_a.pow(-1)*self.half+rl_loss*self.weight_b.pow(-1)*self.half+torch.log(self.weight_a)+torch.log(self.weight_b)
-        #return loss
+
         self.weight_a = self.weight_a.to(rl_loss.device)
         self.weight_b = self.weight_b.to(rl_loss.device)
         self.half = self.half.to(rl_loss.device)
@@ -231,14 +229,15 @@ class MnemicReader(nn.Module):
         a2 = torch.pow(self.weight_b, -2) * self.half
         b1 = torch.log(torch.pow(self.weight_a, 2))
         b2 = torch.log(torch.pow(self.weight_b, 2))
-        #total_loss = (loss1+loss2)*self.weight_a+rl_loss*self.weight_b
+
         return loss * a1 + rl_loss * a2 + b1 + b2, loss, s_index, e_index
 
-    def evaluate(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask):
-        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
-                                                                        c_em, c_char_lens, c_mask, q_vec, 
-                                                                        q_pos, q_ner, q_char, q_em, 
-                                                                        q_char_lens, q_mask)
+
+    def evaluate(self, c_vec, c_pos, c_mask, q_vec, q_pos, q_mask):
+        c_lens = torch.sum(c_mask, dim=1)
+        q_lens = torch.sum(q_mask, dim=1)
+        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos,c_lens, 
+                                                                        q_vec, q_pos, q_lens)
 
         s_prob = torch.squeeze(s_prob)
         e_prob = torch.squeeze(e_prob)

@@ -65,7 +65,7 @@ def convert_data(datafile, w2i={}, pos2i={}, update_dict=True, all_sents=False):
 					posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
 				passage_idxs.append(np.stack((widx, posidx), axis=1))
 			if len(passage_idxs) > 0:
-				yield(qidx, a1idx, a2idx, passage_idxs, passage_scores)			
+				yield(qidx, a1idx, a2idx, passage_idxs, passage_scores)
 
 def getIRPretrainData(data_gen, pos_thres=100, npairs=10, nques=-1):
 	Qs = []

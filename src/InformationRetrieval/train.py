@@ -118,7 +118,7 @@ def train(args):
 
     logger.info('loading train data')    
     train_data_gen = convert_data(args.train_file, w2i, pos2i, update_dict=(len(w2i) <= 2))
-    Q_train, P_train, N_train, y_train = getIRPretrainData(train_data_gen, nques=5000)
+    Q_train, P_train, N_train, y_train = getIRPretrainData(train_data_gen, nques=args.nques, npairs=args.npairs)
     train_ds = PairwiseDataset(Q_train, P_train, N_train, y_train)
     train_dl = D.DataLoader(train_ds, batch_size=args.train_batch_size, shuffle=True,
                             collate_fn=mCollateFn)    
@@ -233,6 +233,8 @@ if __name__ == '__main__':
     parser.add_argument("embedding_file", help="File that contains pre-trained embeddings")
     parser.add_argument('--seed', type=int, default=6, help='Random seed for the experiment')
     parser.add_argument('--epochs', type=int, default=20, help='Train data iterations')
+    parser.add_argument('--nques', type=int, default=-1, help='Batch size for training')
+    parser.add_argument('--npairs', type=int, default=10, help='Batch size for training')
     parser.add_argument('--train_batch_size', type=int, default=32, help='Batch size for training')
     parser.add_argument('--dev_batch_size', type=int, default=32, help='Batch size for dev')
     parser.add_argument('--pos_emb_size', type=int, default=50, help='Embedding size for pos tags')
