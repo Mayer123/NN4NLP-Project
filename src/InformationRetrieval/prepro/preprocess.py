@@ -18,7 +18,7 @@ def convert_data(datafile, w2i={}, pos2i={}, update_dict=True, all_sents=False):
 
 	np.random.seed(0)
 	cids = list(data.keys())
-	cids = np.random.shuffle(cids)
+	np.random.shuffle(cids)
 	for cid in cids:
 		context = data[cid]['full_text']
 		questions = data[cid]['qaps']

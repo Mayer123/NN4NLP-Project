@@ -66,10 +66,12 @@ class ConvKNRM(nn.Module):
 		self.summarizer = Summarizer(emb_dim)
 
 		self.linear = nn.Linear(nkernels * max_ngram**(1 + int(xmatch_ngrams)), 1, bias=False)
-	def forward(self, q, d, qlen, dlen):
-		q_emb = self.emb(q[:,:,0])
-		d_emb = self.emb(d[:,:,0])
 
+	def embed(self, x):
+		x_emb = self.emb(x[:,:,0])
+		return x_emb
+
+	def score(self, q_emb, d_emb, qlen, dlen):
 		q_conv = [conv(q_emb.transpose(1,2)) for conv in self.convs]
 		d_conv = [conv(d_emb.transpose(1,2)) for conv in self.convs]
 
@@ -96,7 +98,13 @@ class ConvKNRM(nn.Module):
 				counts.append(kernel_counts)
 		counts = torch.cat(counts, dim=1)
 		# print(counts.shape)		
-		score = self.linear(counts)
+		score = self.linear(counts).squeeze(1)
+		return score
+
+	def forward(self, q, d, qlen, dlen):
+		q_emb = self.embed(q)
+		d_emb = self.embed(d)
+		score = self.score(q_emb, d_emb, qlen, dlen)
 		return score
 
 	def getSentScores(self, q, c, qlen, clen, batch_size):		
@@ -111,7 +119,8 @@ class ConvKNRM(nn.Module):
 
 			# print(c_batch.shape, clen_batch.shape)
 			# print(q_batch.shape, qlen_batch.shape)
-			scores[i*batch_size:(i+1)*batch_size] = self.forward(q_batch, c_batch, 
+
+			scores[i*batch_size:(i+1)*batch_size] = self.score(q_batch, c_batch, 
 															qlen_batch, clen_batch)
 		return scores
 
@@ -135,3 +144,12 @@ class ConvKNRM(nn.Module):
 
 		scores = torch.stack(scores, dim=0)
 		return scores
+
+if __name__ == '__main__':
+	q = torch.LongTensor(torch.randint(10, size=(2,10,2)).long())
+	d = torch.LongTensor(torch.randint(3, size=(3,4,2)).long())
+	qlen = torch.LongTensor([1,2])
+	dlen =  torch.LongTensor([2,3])
+
+	m = ConvKNRM(vocab_size=20)
+	print(m.forward_singleContext(q, d, qlen, dlen))
