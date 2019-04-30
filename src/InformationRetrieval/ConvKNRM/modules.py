@@ -71,7 +71,7 @@ class ConvKNRM(nn.Module):
 		d_emb = self.emb(d[:,:,0])
 
 		q_conv = [conv(q_emb.transpose(1,2)) for conv in self.convs]
-		d_conv = [conv(d_emb) for conv in self.convs]
+		d_conv = [conv(d_emb.transpose(1,2)) for conv in self.convs]
 
 		counts = []
 		for qi in range(len(q_conv)):

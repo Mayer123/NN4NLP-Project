@@ -2,10 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
-from ReadingComprehension.IterativeReattentionAligner.modules import (InteractiveAligner, 
-													SelfAligner, 
-													Summarizer, 
-													AnswerPointer)
+from ReadingComprehension.IterativeReattentionAligner.modules import IterativeAligner
 
 class GaussianKernel(object):
 	"""docstring for GaussianKernel"""
@@ -19,12 +16,12 @@ class GaussianKernel(object):
 		return sim
 		
 
-class AttentionRM(nn.Module):
+class RMRRM(nn.Module):
 	"""docstring for ConvKNRM"""
 	def __init__(self, emb_layer=None, pos_emb_layer=None, init_emb=None, emb_trainable=True, vocab_size=None, 
 					pos_vocab_size=None, emb_dim=100, pos_emb_dim=100, dropout=0.3,
 					use_rnn=True):
-		super(AttentionRM, self).__init__()
+		super(RMRRM, self).__init__()
 		if emb_layer is not None:
 			self.emb = emb_layer
 			emb_dim = self.emb.weight.data.shape[1]
@@ -41,38 +38,13 @@ class AttentionRM(nn.Module):
 		else:
 			self.pos_emb = nn.Embedding(pos_vocab_size, pos_emb_dim)
 
-		self.emb_proj = nn.Linear(emb_dim+pos_emb_dim, emb_dim)
-
-		self.use_rnn = use_rnn
-		if use_rnn:
-			self.evidence_collector = nn.LSTM(emb_dim, emb_dim, 1,
-                                        batch_first=True, bidirectional=True)
-			self.evidence_proj = nn.Linear(2*emb_dim, emb_dim, bias=False)
-		else:
-			self.evidence_collector = nn.Sequential(
-				nn.Conv1d(emb_dim, emb_dim, 5, padding=2),
-				nn.Tanh(),
-				nn.Dropout(dropout, inplace=False),
-				nn.Conv1d(emb_dim, emb_dim, 3, padding=1),
-				nn.Dropout(dropout, inplace=False),
-				)		
-
-		self.mlp1 = nn.Sequential(
-                        nn.Linear(4*emb_dim, emb_dim, bias=False),
-                        nn.Tanh(),
-                        nn.Dropout(dropout, inplace=False),
-                        nn.Linear(emb_dim, 1, bias=False)
-                    )
-
-		self.interactive_aligner = InteractiveAligner(emb_dim)
-		self.self_aligner = SelfAligner(emb_dim)
-		self.summarizer = Summarizer(emb_dim)
+		
 		self.dropout = nn.Dropout(dropout, inplace=False)
 
 	def embed(self, x):
-		x_emb = self.dropout(self.emb(x[:,:,0]))
-		# xp_emb = self.dropout(self.pos_emb(x[:,:,1]))
-		# x_emb = self.emb_proj(torch.cat((xw_emb, xp_emb), dim=2))
+		xw_emb = self.dropout(self.emb(x[:,:,0]))
+		xp_emb = self.dropout(self.pos_emb(x[:,:,1]))
+		x_emb = torch.cat((xw_emb, xp_emb), dim=2)
 
 		# print('x size:',x.nelement() * x.storage().element_size()/(1024**3))
 		# print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
@@ -98,20 +70,22 @@ class AttentionRM(nn.Module):
 			# encoded,_ = torch.nn.utils.rnn.pad_packed_sequence(attendedD, batch_first=True)
 			# encoded = encoded[rev_sorted_idx]
 
-			encoded = self.evidence_proj(encoded)
+			# encoded = self.evidence_proj(encoded)
 		else:
 			encoded = self.evidence_collector(attendedD.transpose(1,2))		
 			encoded = encoded.transpose(1,2)
 
 		encoded = self.dropout(encoded)
 
-		s = self.summarizer(q_emb, qlen)
-		s = s.expand(s.shape[0], encoded.shape[1], s.shape[2])
+		s = self.answer_pointer.summarizer(q_emb, qlen)
+		s = s.expand(s.shape[0], encoded.shape[1], s.shape[2])	
 
-		catted = torch.cat((encoded, s, encoded*s, encoded-s), dim=2)
-		del encoded
+		probs = self.answer_pointer.computeP(s, encoded, attendedD_len, self.answer_pointer.mlp1)
+		
+		# catted = torch.cat((encoded, s, encoded*s, encoded-s), dim=2)
+		# del encoded
 
-		probs = self.mlp1(catted)
+		# probs = self.mlp1(catted)
 		score = torch.mean(probs.view(probs.shape[0], -1), dim=1)
 		return score		
 
