@@ -98,3 +98,40 @@ class ConvKNRM(nn.Module):
 		# print(counts.shape)		
 		score = self.linear(counts)
 		return score
+
+	def getSentScores(self, q, c, qlen, clen, batch_size):		
+		scores = torch.zeros(c.shape[0]).float().to(c.device)
+		n_batches = (c.shape[0] + batch_size - 1) // batch_size
+		for i in range(n_batches):
+			c_batch = c[i*batch_size:(i+1)*batch_size]			
+			clen_batch = clen[i*batch_size:(i+1)*batch_size]
+
+			q_batch = q[i*batch_size:(i+1)*batch_size]
+			qlen_batch = qlen[i*batch_size:(i+1)*batch_size]
+
+			# print(c_batch.shape, clen_batch.shape)
+			# print(q_batch.shape, qlen_batch.shape)
+			scores[i*batch_size:(i+1)*batch_size] = self.forward(q_batch, c_batch, 
+															qlen_batch, clen_batch)
+		return scores
+
+	def forward_singleContext(self, q, d, qlen, dlen, batch_size=1024):
+		q = self.embed(q)
+		d = self.embed(d)
+
+		scores = []
+		for i in range(q.shape[0]):
+			q_ = q[i, :qlen[i]]
+			q_ = q_.expand(d.shape[0], -1, -1)
+
+			qlen_ = qlen[i:i+1].expand(q_.shape[0])	
+
+			# print(torch.cuda.memory_allocated(0) / (1024)**3)
+			# c_scores = self.score(q_, d, qlen_, dlen)
+			c_scores = self.getSentScores(q_, d, qlen_, dlen, batch_size)
+			# print(c_scores.shape)
+
+			scores.append(c_scores)
+
+		scores = torch.stack(scores, dim=0)
+		return scores

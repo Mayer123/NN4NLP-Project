@@ -15,9 +15,15 @@ def convert_data(datafile, w2i={}, pos2i={}, update_dict=True, all_sents=False):
 		with open(datafile, 'rb') as f:
 			data = pickle.load(f)
 	context_cache = {}
-	for cid in data:
+
+	np.random.seed(0)
+	cids = list(data.keys())
+	cids = np.random.shuffle(cids)
+	for cid in cids:
 		context = data[cid]['full_text']
-		for q in data[cid]['qaps']:
+		questions = data[cid]['qaps']
+		np.random.shuffle(questions)
+		for q in questions:
 			qwords = q['question_tokens']
 			qpos = q['question_pos']
 			awords = [q['answer1_tokens'],
