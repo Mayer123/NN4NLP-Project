@@ -51,6 +51,7 @@ def add_arguments(parser):
     parser.add_argument('--load_ir_model', type=str, default="", help='path to the log file')
     parser.add_argument('--mode', type=str, default='summary', help='path to the log file')  
     parser.add_argument('--use_generator', action='store_true', help='path to the log file')  
+    parser.add_argument('--use_rmr_lite', action='store_true', help='path to the log file')
 
 def compute_scores(rouge, rrrouge, start, end, context, a1, a2):
     rouge_score = 0.0
@@ -313,6 +314,7 @@ def main(args):
     input_size = embeddings.shape[1] + args.char_emb_size * 2 + args.pos_emb_size + args.ner_emb_size + 1
     if args.load_model == '':
         if args.use_rmr_lite:
+            embeddings = torch.from_numpy(embeddings)
             model = e2e_MnemicReader(input_size, args.hidden_size, args.num_layers,
                             args.pos_emb_size, embeddings, len(tag2i)+2, len(w2i)+4,
                             args.emb_dropout, args.rnn_dropout)
@@ -387,7 +389,7 @@ def main(args):
                     a_vec = a_vec.cuda()
                 
                 if args.use_rmr_lite:
-                    batch_loss, CE_loss, s_index, e_index = model(c_vec, c_pos, c_lens, q_vec, q_pos, q_lens, context, a_vec, start, end, context, a1, a2, a_vec, alen)
+                    batch_loss, CE_loss, s_index, e_index = model(c_vec, c_pos, c_mask, q_vec, q_pos, q_mask, start, end, c, a1, a2, a_vec, None)
                 else:                    
                     batch_loss, CE_loss, s_index, e_index, generate_output = model(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, c, a1, a2, a_vec)                
                 #batch_score = compute_scores(rouge, rrrouge, s_index.tolist(), e_index.tolist(), c, a1, a2)
@@ -459,7 +461,7 @@ def main(args):
                     q_em = q_em.cuda()
                     q_mask = q_mask.cuda()
 
-                if use use_rmr_lite:
+                if args.use_rmr_lite:
                     pred_start, pred_end, s_prob, e_prob, generate_output = model.evaluate(c_vec, c_pos, c_mask, q_vec, q_pos, q_mask)
                 else:    
                     pred_start, pred_end, s_prob, e_prob, generate_output = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask)

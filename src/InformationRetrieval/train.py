@@ -8,6 +8,7 @@ import argparse
 import logging
 import pickle
 from InformationRetrieval.AttentionRM.modules import AttentionRM
+from InformationRetrieval.ConvKNRM.modules import ConvKNRM
 from InformationRetrieval.prepro.preprocess import *
 from utils.utils import reset_embeddings
 
@@ -140,7 +141,10 @@ def train(args):
     if args.load_model != '':
         model = torch.load(args.load_model)        
     else:
-        model = AttentionRM(init_emb=embeddings, pos_vocab_size=len(pos2i))
+        if args.model == 'AttentionRM':
+            model = AttentionRM(init_emb=embeddings, pos_vocab_size=len(pos2i))
+        if args.model == 'ConvKNRM':
+            model = ConvKNRM(init_emb=embeddings)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
@@ -245,6 +249,7 @@ if __name__ == '__main__':
     parser.add_argument('--load_model', type=str, default="", help='path to the log file')
     parser.add_argument('--word_dict', type=str, default="", help='path to the log file')
     parser.add_argument('--pos_dict', type=str, default="", help='path to the log file')
+    parser.add_argument('--model', type=str, default="AttentionRM", help='path to the log file')
 
 
     args = parser.parse_args()

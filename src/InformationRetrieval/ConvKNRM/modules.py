@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
-from IterativeReattentionAligner.modules import (InteractiveAligner, 
+from ReadingComprehension.IterativeReattentionAligner.modules import (InteractiveAligner, 
 													SelfAligner, 
 													Summarizer, 
 													AnswerPointer)
@@ -67,18 +67,8 @@ class ConvKNRM(nn.Module):
 
 		self.linear = nn.Linear(nkernels * max_ngram**(1 + int(xmatch_ngrams)), 1, bias=False)
 	def forward(self, q, d, qlen, dlen):
-		q_emb = self.emb(q)
-		d_emb = self.emb(d)
-		
-		qng, qng_len, _ = self.interactive_aligner(d_emb, q_emb,
-												dlen, qlen)
-
-		attendedD, attendedD_len, B = self.self_aligner(qng, qng_len)
-
-		# for i in range(len(attendedD_len)):
-		# 	attendedD[i, attendedD_len[i]:,:] = 0
-
-		d_emb = self.evidence_collector(attendedD.transpose(1,2))
+		q_emb = self.emb(q[:,:,0])
+		d_emb = self.emb(d[:,:,0])
 
 		q_conv = [conv(q_emb.transpose(1,2)) for conv in self.convs]
 		d_conv = [conv(d_emb) for conv in self.convs]
