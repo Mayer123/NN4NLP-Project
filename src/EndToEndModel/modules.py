@@ -54,7 +54,7 @@ class EndToEndModel(nn.Module):
     #           c_scores = self.ir_model(q_, c, qlen_, clen)
     #       #print(c_scores.shape)          
 
-    def forward(self, q, c, avec1, avec2, qlen, clen, alen, p_words, c_batch_size=512):
+    def forward(self, q, c, avec1, avec2, qlen, clen, alen, p_words, a1, a2, c_batch_size=512):
         # print(q.shape, c.shape, a.shape)
         selected_sents = []     
         string_sents = []
@@ -70,7 +70,6 @@ class EndToEndModel(nn.Module):
             c_scores = self.ir_model1.forward_singleContext(q, c, qlen, clen,
                                                         batch_size=c_batch_size)
             
-            print("Getting top %d" %(self.n_ctx_sents*2))
             _, topk_idx_ir1 = torch.topk(c_scores, self.n_ctx_sents*2, dim=1, sorted=False)
             
             ctx1 = [c[topk_idx_ir1[i]] for i in range(len(c_scores))]
@@ -78,13 +77,12 @@ class EndToEndModel(nn.Module):
             
             ctx1 = torch.stack(ctx1, dim=0)
             ctx_len1 = torch.stack(ctx_len1, dim=0)         
-        print("==> CTX1 is ", len(ctx1))
+
         for i in range(len(ctx1)):
     
             c_scores = self.ir_model2.forward_singleContext(q[[i]], ctx1[i], qlen[[i]], ctx_len1[i],
                                                             batch_size=c_batch_size)            
             
-            print("====> ", c_scores.shape)
             _, topk_idx = torch.topk(c_scores[0], self.n_ctx_sents, dim=0)  
 
             sents = ctx1[i, topk_idx]           
@@ -100,8 +98,6 @@ class EndToEndModel(nn.Module):
                 string_sent.append([p_words[_idx]])
             
             string_sent = [w for s in string_sent for w in s]
-            print("**********************************************************")
-            print(string_sent)
             string_sents.append(string_sent[0])
 
         # for i in range(len(c_scores)):
@@ -123,23 +119,27 @@ class EndToEndModel(nn.Module):
         for (i, sents) in enumerate(selected_sents):
             ctx[i,:len(sents)] = sents
         
-        print(ctx.shape, q.shape)
-        loss1, loss2, sidx, eidx, extracted_span = self.rc_model(ctx[:,:,0], ctx[:,:,1], ctx_len, 
+        # print(ctx.shape, q.shape) # batch, seq_len, [word_index, pos_index]
+        loss1, sidx, eidx = self.rc_model(ctx[:,:,0], ctx[:,:,1], ctx_len, 
                                                 q[:,:,0], q[:,:,1], qlen, 
-                                                None, avec1, alen)
-        print (extracted_span.shape)
-        print (sidx, eidx)
-        raw_span = []
-        for i in range(len(string_sents)):
-            print("*************")
-            print(len(string_sents[i]))
-            print( sidx[i] , eidx[i], eidx[i] - sidx[i])
-            print(len(string_sents[i][sidx[i]:eidx[i]+1]))
-            raw_span.append(['<sos>'] + string_sents[i][sidx[i]:eidx[i]+1] + ['<eos>'])
-            print (len(raw_span[-1]))
+                                                string_sents, avec1, alen, a1, a2)
 
-        gen_loss, output = self.ag_model(extracted_span, avec2, raw_span)
-        return loss1+gen_loss
+        # print (loss1)
+        return loss1, sidx, eidx
+        
+        # print (sidx, eidx)
+        # raw_span = []
+        # for i in range(len(string_sents)):
+        #     print("*************")
+        #     print(len(string_sents[i]))
+        #     print( sidx[i] , eidx[i], eidx[i] - sidx[i])
+        #     print(len(string_sents[i][sidx[i]:eidx[i]+1]))
+        #     raw_span.append(['<sos>'] + string_sents[i][sidx[i]:eidx[i]+1] + ['<eos>'])
+        #     print (len(raw_span[-1]))
+
+        # gen_loss, output = self.ag_model(extracted_span, avec2, raw_span)
+
+        # return loss1+gen_loss
 
     def evaluate(self, q, c, qlen, clen, p_words, c_batch_size=512):
         selected_sents = []
@@ -153,7 +153,7 @@ class EndToEndModel(nn.Module):
             qlen_ = qlen[i:i+1].expand(q_.shape[0]) 
             #c_scores = self.ir_model(q_, c, qlen_, clen)
             
-            c_scores = self.ir_model(q_, c, qlen_, clen)
+            c_scores = self.ir_model1(q_, c, qlen_, clen)
             #print(c_scores.shape)          
 
             _, topk_idx = torch.topk(c_scores, self.n_ctx_sents, dim=0)
@@ -179,16 +179,17 @@ class EndToEndModel(nn.Module):
 
         scores = torch.stack(scores, dim=0)
 
-        c_mask = utils.output_mask(ctx_len)
-        q_mask = utils.output_mask(qlen)
-        sidx, eidx, extracted_span = self.rc_model.evaluate(ctx[:,:,0], ctx[:,:,1], c_mask, 
-                                                q[:,:,0], q[:,:,1], q_mask)
-        raw_span = []
-        for i in range(len(string_sents)):
-            raw_span.append(['<sos>'] + string_sents[i][sidx[i]:eidx[i]+1] + ['<eos>'])
+        # c_mask = utils.output_mask(ctx_len)
+        # q_mask = utils.output_mask(qlen)
+        sidx, eidx = self.rc_model.evaluate(ctx[:,:,0], ctx[:,:,1], ctx_len, 
+                                                q[:,:,0], q[:,:,1], qlen)
+        # raw_span = []
+        # for i in range(len(string_sents)):
+        #     raw_span.append(['<sos>'] + string_sents[i][sidx[i]:eidx[i]+1] + ['<eos>'])
 
-        gen_loss, output = self.ag_model(extracted_span, avec2, raw_span)
-        return gen_loss
+        # gen_loss, output = self.ag_model(extracted_span, avec2, raw_span)
+        return sidx, eidx, string_sents
+        # return gen_loss
 
         # # print(type(ctx_len), type(qlen))
         # loss1, loss2, sidx, eidx = self.rc_model(ctx[:,:,0], ctx[:,:,1], ctx_len, 

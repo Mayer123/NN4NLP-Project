@@ -26,6 +26,7 @@ import pickle
 
 stoplist = set(['.',',', '...', '..'])
 bleu_obj = Bleu(4)
+NUM_WORKERS = 0
 
 def add_arguments(parser):
     parser.add_argument("train_file", help="File that contains training data")
@@ -89,6 +90,7 @@ def generate_answer(indices, id2words):
     skip = [0, 1, 2]
     # print (indices)
     for idx in indices:
+        idx = int(idx)
         if idx in skip:
             continue
         if idx == 3:
@@ -112,6 +114,8 @@ def generate_scores(rouge, generate_output, id2words, a1, a2, show=False):
 
 def train_full(args):
     global logger
+    rouge = Rouge()
+    rrrouge = RRRouge()
     logger = logging.getLogger()
     fh = logging.FileHandler(args.log_file)
     fh.setLevel(logging.INFO)
@@ -126,7 +130,10 @@ def train_full(args):
     with open(args.dev_file, 'rb') as f:
         dev_data = pickle.load(f)
     w2i, tag2i, ner2i, c2i, common_vocab = build_fulltext_dicts(training_data, args.min_occur)
-    
+    id2words = {}
+    for k, v in common_vocab.items():
+        id2words[v] = k
+
     w2i['<pad>'] = 0
     w2i['<unk>'] = 1
     tag2i['<pad>'] = 0 
@@ -136,8 +143,8 @@ def train_full(args):
     dev = convert_fulltext(dev_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=100, build_chunks=True)
     train = FulltextDataset(train, args.train_batch_size)
     dev = FulltextDataset(dev, args.dev_batch_size)
-    train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=1, num_workers=4, collate_fn=mCollateFn)
-    dev_loader = torch.utils.data.DataLoader(dev, batch_size=1, num_workers=4, collate_fn=mCollateFn)
+    train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=1, num_workers = NUM_WORKERS, collate_fn=mCollateFn)
+    dev_loader = torch.utils.data.DataLoader(dev, batch_size=1, num_workers = NUM_WORKERS, collate_fn=mCollateFn)
     logger.info('Generating embeddings')
     embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
     embeddings = torch.from_numpy(embeddings).float()
@@ -192,13 +199,13 @@ def train_full(args):
             if use_cuda:
                 q = q.cuda()
                 passage = passage.cuda()
-                avec1 = avec1.cuda()
-                avec2 = avec2.cuda()
+                # avec1 = avec1.cuda()
+                # avec2 = avec2.cuda()
                 qlens = qlens.cuda()
                 slens = slens.cuda()
                 alens = alens.cuda()
-            
-            batch_loss = model(q, passage, avec1, avec2, qlens, slens, alens, p_words)
+
+            batch_loss, sidx, eidx = model(q, passage, avec1, avec2, qlens, slens, alens, p_words, a1, a2)
             optimizer.zero_grad()
             batch_loss.backward()
 
@@ -209,6 +216,7 @@ def train_full(args):
             reset_embeddings(rc_model.word_embeddings, embeddings, trained_idx)
             if global_step % 100 == 0:
                 logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
+            # break
             #rc_model.word_embeddings[0].weight.data[trained_idx] = fixed_embeddings
             # pr.disable()
             # s = io.StringIO()
@@ -226,6 +234,7 @@ def train_full(args):
             bleu4_scores = 0.0
             another_rouge = 0.0
             dev_loss = 0.0
+            gen_rouge = 0.
             for batch in dev_loader:
                 q, passage, avec1, avec2, qlens, slens, alens, a1, a2, p_words = batch
                 if use_cuda:
@@ -233,10 +242,12 @@ def train_full(args):
                     passage = passage.cuda()
                     qlens = qlens.cuda()
                     slens = slens.cuda()
-                batch_loss, generate_output = model.evaluate(q, passage, qlens, slens, p_words)
-                dev_loss += batch_loss.cpu().item()
-                batch_score = compute_scores(rouge, rrrouge, generate_output, a1, a2)
-                #gen_rouge += generate_scores(rouge, generate_output.tolist(), id2words, a1, a2)
+                sidx, eidx, context = model.evaluate(q, passage, qlens, slens, p_words)
+                # dev_loss += 0# batch_loss.cpu().item()
+                # print(context)
+
+                batch_score = compute_scores(rouge, rrrouge, sidx, eidx, context, a1, a2)
+                # gen_rouge += generate_scores(rouge, generate_output.cpu().numpy(), id2words, a1, a2)
                 rouge_scores += batch_score[0]
                 bleu1_scores += batch_score[1]
                 bleu4_scores += batch_score[2]
@@ -287,14 +298,15 @@ def main(args):
     id2words = {}
     for k, v in common_vocab.items():
         id2words[v] = k
+
     train = TextDataset(list(train))
     dev = TextDataset(list(dev))
     print (len(train))
     print (len(dev))
     logger.info('Generating embeddings')
     embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
-    train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=args.train_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
-    dev_loader = torch.utils.data.DataLoader(dev, batch_size=args.dev_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
+    train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=args.train_batch_size, num_workers = NUM_WORKERS, collate_fn=lambda batch : zip(*batch))
+    dev_loader = torch.utils.data.DataLoader(dev, batch_size=args.dev_batch_size, num_workers = NUM_WORKERS, collate_fn=lambda batch : zip(*batch))
     #print (embeddings.shape)
     use_cuda = torch.cuda.is_available()
     #use_cuda = False

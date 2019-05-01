@@ -7,11 +7,13 @@ stoplist = set(['.',',', '...', '..'])
 
 def get_reward(pred_start, pred_end, start, end, context, a1, a2):
     #rouge = Rouge()
+
     rrrouge = RRRouge()
     p1 = pred_start.tolist()
     p2 = pred_end.tolist()
     #l1 = start.tolist()
     #l2 = end.tolist()
+
     scores = np.zeros(len(p1))
     for i in range(0, len(p1)):
         if p1[i] > p2[i]:
@@ -35,6 +37,7 @@ class DCRLLoss(nn.Module):
         #_, greedy_start = torch.max(start_prob, dim=1)
         #_, greedy_end = torch.max(end_prob, dim=1)
         max_idx = torch.argmax(probs, dim=1)
+        # print("MAXIDX: ", max_idx)
         greedy_start = max_idx // context_len
         greedy_end = max_idx % context_len
         greedy_reward = get_reward(greedy_start, greedy_end, start, end, context, a1, a2)
@@ -50,7 +53,12 @@ class DCRLLoss(nn.Module):
         indice = torch.multinomial(kbest_probs, 1)
         #sample_start = torch.gather(kbest_start, 1, indice_start).squeeze()
         #sample_end = torch.gather(kbest_end, 1, indice_end).squeeze()
-        sample_max_idx = torch.gather(kbest, 1, indice).squeeze()
+
+        sample_max_idx = torch.gather(kbest, 1, indice).squeeze(dim=-1)
+        # print("((((((((((")
+        # print(sample_max_idx.shape)
+        # print(sample_max_idx.squeeze().shape)
+
         sample_start = sample_max_idx // context_len
         sample_end = sample_max_idx % context_len
         sample_reward = get_reward(sample_start, sample_end, start, end, context, a1, a2)

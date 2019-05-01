@@ -22,7 +22,7 @@ class TextDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         sample = self.data[idx]
         return sample[0], sample[1], sample[2], sample[3], sample[4], sample[5], sample[6], sample[7], sample[8]\
-        , sample[9], sample[10], sample[11], sample[12], sample[13], sample[14], sample[15], sample[16], sample[17], sample[18]
+        , sample[9], sample[10], sample[11], sample[12], sample[13], sample[14], sample[15], sample[16], sample[17], sample[18] #15, 16 are the answer
 
 class FulltextDataset(torch.utils.data.Dataset):
 
@@ -102,15 +102,15 @@ def mCollateFn(batch):
     for i in range(len(batch)):
         Qtensor[i, :qlens[i]] = torch.tensor(Qwords[i])
         Qtagtensor[i, :qlens[i]] = torch.tensor(Qtags[i])
-        A1tensor[i, :alens[i]] = torch.tensor(A1[i])
-        A2tensor[i, :alens[i]] = torch.tensor(A2[i])
+        # A1tensor[i, :alens[i]] = torch.tensor(A1[i])
+        # A2tensor[i, :alens[i]] = torch.tensor(A2[i])
         if i == 0:
             for j in range(len(Passages)):
                 Ptensor[j,:slens[j]] = torch.tensor(Passages[j])
                 Ptagtensor[j,:slens[j]] = torch.tensor(Passagestags[j])
     Ptensor = torch.cat([Ptensor.unsqueeze(2), Ptagtensor.unsqueeze(2)], dim=2)
     Qtensor = torch.cat([Qtensor.unsqueeze(2), Qtagtensor.unsqueeze(2)], dim=2)
-    return Qtensor, Ptensor, A1tensor, A2tensor, qlens, slens, alens, A1, A2, Passageswords
+    return Qtensor, Ptensor, None, None, qlens, slens, alens, A1, A2, Passageswords
 
 def build_fulltext_dicts(data, min_occur=100):
     w2i = Counter()
@@ -169,6 +169,8 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, b
             else:
                 real_aidx = [w2i.get(w, w2i['<unk>']) for w in q['answer2_tokens']]
                 target_aidx = [common_vocab.get(w, w2i['<unk>']) for w in q['answer2_tokens']]  
+            a1_string = q['answers'][0]
+            a2_string = q['answers'][1]
             #qners = [ner2i.get(w, ner2i['<unk>']) for w in q['question_ner']]
             #qchars = [[c2i.get(c, c2i['<unk>']) for c in w] for w in q['question_tokens']]
             if cid in context_cache:
@@ -236,7 +238,8 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, b
                         passage_idxs.append((widx, posidx, neridx, charidx, words_buff))     
                 context_cache[cid] = passage_idxs
             if len(passage_idxs) > 0:
-                yield(cid, qidx, qtags, qners, qchars, real_aidx, target_aidx, passage_idxs)
+                yield(cid, qidx, qtags, qners, qchars, a1_string, a2_string, passage_idxs)
+                # yield(cid, qidx, qtags, qners, qchars, real_aidx, target_aidx, passage_idxs)
 
 
 def build_dicts(data):    

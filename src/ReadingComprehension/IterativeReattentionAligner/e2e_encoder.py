@@ -132,77 +132,89 @@ class MnemicReader(nn.Module):
         con_input = torch.cat([con_vec, con_pos], 2)
         que_input = torch.cat([que_vec, que_pos], 2)
         x1 = con_input.transpose(0, 1)
-        # x1_len, x1_sorted_idx = torch.sort(torch.sum(c_mask, dim=1), descending=True)
-        # _, x1_rev_sorted_idx = torch.sort(x1_sorted_idx)
-        # packed_x1 = nn.utils.rnn.pack_padded_sequence(x1[:,x1_sorted_idx,:], x1_len)
+
+
+        x1_len, x1_sorted_idx = torch.sort(c_lens, descending=True)
+        _, x1_rev_sorted_idx = torch.sort(x1_sorted_idx)
+        packed_x1 = nn.utils.rnn.pack_padded_sequence(x1[:,x1_sorted_idx,:], x1_len)
 
         x2 = que_input.transpose(0, 1)
-        # x2_len, x2_sorted_idx = torch.sort(torch.sum(q_mask, dim=1), descending=True)
-        # _, x2_rev_sorted_idx = torch.sort(x2_sorted_idx)
-        # packed_x2 = nn.utils.rnn.pack_padded_sequence(x2[:,x2_sorted_idx,:], x2_len)
+        x2_len, x2_sorted_idx = torch.sort(q_lens, descending=True)
+        _, x2_rev_sorted_idx = torch.sort(x2_sorted_idx)
+        packed_x2 = nn.utils.rnn.pack_padded_sequence(x2[:,x2_sorted_idx,:], x2_len)
         
 
         enc_con = []
         enc_que = []
         for i in range(self.num_layers):
-            x1 = self.rnn[i](x1)[0]
-            # packed_x1 = self.rnn[i](packed_x1)[0]
-            # x1, x1_len = nn.utils.rnn.pad_packed_sequence(packed_x1)
+            # x1 = self.rnn[i](x1)[0]
+            packed_x1 = self.rnn[i](packed_x1)[0]
+            x1, x1_len = nn.utils.rnn.pad_packed_sequence(packed_x1)
             x1 = self.rnn_dropout(x1)      
-            enc_con.append(x1)      
-            # enc_con.append(x1[:,x1_rev_sorted_idx,:])            
+            # enc_con.append(x1)      
+            enc_con.append(x1[:,x1_rev_sorted_idx,:])            
 
-            x2 = self.rnn[i](x2)[0]
-            # packed_x2 = self.rnn[i](packed_x2)[0]
-            # x2, x2_len = nn.utils.rnn.pad_packed_sequence(packed_x2)
+            # x2 = self.rnn[i](x2)[0]
+            packed_x2 = self.rnn[i](packed_x2)[0]
+            x2, x2_len = nn.utils.rnn.pad_packed_sequence(packed_x2)
             x2 = self.rnn_dropout(x2)
-            enc_que.append(x2)
-            # enc_que.append(x2[:,x2_rev_sorted_idx,:])
+            # enc_que.append(x2)
+            enc_que.append(x2[:,x2_rev_sorted_idx,:])
             
-            # if i < self.num_layers -1:
-            #     packed_x1 = nn.utils.rnn.pack_padded_sequence(x1, x1_len)
-            #     packed_x2 = nn.utils.rnn.pack_padded_sequence(x2, x2_len)
+            if i < self.num_layers -1:
+                packed_x1 = nn.utils.rnn.pack_padded_sequence(x1, x1_len)
+                packed_x2 = nn.utils.rnn.pack_padded_sequence(x2, x2_len)
 
         enc_con = torch.cat(enc_con, 2).transpose(0, 1) # (batch_size, seq_len, enc_con_dim)
         enc_que = torch.cat(enc_que, 2).transpose(0, 1) # (batch_size, seq_len, enc_que_dim)            
         # print(enc_con.shape, enc_que.shape)
-        s_prob, e_prob, probs, final_context = self.aligningBlock(enc_con, enc_que, u_lens=c_lens,  v_lens=q_lens)
-        
+                                             # = self.aligningBlock(u, v, u_mask=None, v_mask=None, u_lens=None, v_lens=None)
+        s_prob, e_prob, probs, final_context = self.aligningBlock(enc_con, enc_que, u_mask=None, v_mask=None, u_lens = c_lens, v_lens = q_lens)
+        # print ("=============>", s_prob, e_prob)
+        # print ("=============>", s_prob.shape, e_prob.shape, probs.shape)
         return s_prob, e_prob, probs, final_context
 
-    def forward(self, c_vec, c_pos, c_lens, q_vec, q_pos, q_lens, context, a_vec, alen):
+    def forward(self, c_vec, c_pos, c_lens, q_vec, q_pos, q_lens, context, a_vec, alen, a1, a2):
+        # print("-------------------------------------------------")
+        # print(c_vec, c_pos, c_lens, q_vec, q_pos, q_lens, context, a_vec, alen)
+
         s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos,c_lens, 
                                                                         q_vec, q_pos, q_lens)
-        #print (s_prob.shape, e_prob.shape)
-        #print (start, end)
+        
+
         #print (torch.gather(s_prob.squeeze(), 1, start.unsqueeze(1)))
         #print (start)
         #print (torch.gather(e_prob.squeeze(), 1, end.unsqueeze(1)))
         #print (end)
         #s_prob = torch.log(s_prob)
         #e_prob = torch.log(e_prob)
+        s_prob = s_prob.reshape(s_prob.size()[0], s_prob.size()[1])
+        e_prob = e_prob.reshape(s_prob.size()[0], s_prob.size()[1])
+      
         context_len = s_prob.shape[1]
         max_idx = torch.argmax(probs, dim=1)
         start = max_idx // context_len
         end = max_idx % context_len
-
-        pred_a = [c_vec[i, start[i]:end[i]] for i in range(len(start))]
+        # print (start, end)
+        # print ("----------------")
+        # pred_a = [c_vec[i, start[i]:end[i]] for i in range(len(start))]
         
-        pred_a_len = [len(a) for a in pred_a]
-        padded_pred_a = torch.zeros(len(pred_a), max(pred_a_len), 
-                                   dtype=c_vec.dtype).to(c_vec.device)
-        for (i,x) in enumerate(pred_a):
-           padded_pred_a[i,:pred_a_len[i]] = x
+        # pred_a_len = [len(a) for a in pred_a]
+        # # print(len(pred_a), max(pred_a_len))
+        # padded_pred_a = torch.zeros(len(pred_a), max(pred_a_len), 
+        #                            dtype=c_vec.dtype).to(c_vec.device)
+        # for (i,x) in enumerate(pred_a):
+        #    padded_pred_a[i,:pred_a_len[i]] = x
             
-        pred_a_emb = self.word_embeddings(padded_pred_a)
-        decoder_input = self.prepare_decoder_input(start, end, c_vec)
-        a_emb = self.word_embeddings(a_vec)
+        # pred_a_emb = self.word_embeddings(padded_pred_a)
+        # # decoder_input = self.prepare_decoder_input(start, end, c_vec)
+        # a_emb = self.word_embeddings(a_vec)
 
-        loss = self.loss(a_emb, pred_a_emb, alen, start-end)
-        loss = torch.mean(loss)
+        # loss = self.loss(a_emb, pred_a_emb, alen, start-end)
+        # loss = torch.mean(loss)
 
-        if not self.use_RLLoss:
-            return loss, loss, start, end, decoder_input
+        # if not self.use_RLLoss:
+        #     return loss, loss, start, end, decoder_input
 
         #return loss
         #s_prob = torch.exp(s_prob)
@@ -217,22 +229,29 @@ class MnemicReader(nn.Module):
         #e_prob = e_prob * c_mask.float()
 
         probs = torch.exp(probs)
+
         rl_loss = self.DCRL_loss(probs, s_prob, e_prob, context_len, start, end, context, a1, a2)
-        #_, s_index = torch.max(torch.squeeze(s_prob), dim=1)
-        #_, e_index = torch.max(torch.squeeze(e_prob), dim=1)
+        
+        s_prob = s_prob.reshape(s_prob.size()[0], s_prob.size()[1])
+        e_prob = e_prob.reshape(s_prob.size()[0], s_prob.size()[1])
+        # print("*********")
+        # print(s_prob.shape, e_prob.shape)
+        _, s_index = torch.max(s_prob, dim=1)
+        _, e_index = torch.max(e_prob, dim=1)
         #print (loss1, loss2)
-        #loss = (start - s_index)**2 + (end - e_index)**2
-        #loss = (loss1+loss2)*self.weight_a.pow(-1)*self.half+rl_loss*self.weight_b.pow(-1)*self.half+torch.log(self.weight_a)+torch.log(self.weight_b)
+        # loss = (start - s_index)**2 + (end - e_index)**2
+        # loss = (loss1+loss2)*self.weight_a.pow(-1)*self.half+rl_loss*self.weight_b.pow(-1)*self.half+torch.log(self.weight_a)+torch.log(self.weight_b)
         #return loss
-        self.weight_a = self.weight_a.to(rl_loss.device)
-        self.weight_b = self.weight_b.to(rl_loss.device)
-        self.half = self.half.to(rl_loss.device)
-        a1 = torch.pow(self.weight_a, -2) * self.half
-        a2 = torch.pow(self.weight_b, -2) * self.half
-        b1 = torch.log(torch.pow(self.weight_a, 2))
-        b2 = torch.log(torch.pow(self.weight_b, 2))
+        # self.weight_a = self.weight_a.to(rl_loss.device)
+        # self.weight_b = self.weight_b.to(rl_loss.device)
+        # self.half = self.half.to(rl_loss.device)
+        # a1 = torch.pow(self.weight_a, -2) * self.half
+        # a2 = torch.pow(self.weight_b, -2) * self.half
+        # b1 = torch.log(torch.pow(self.weight_a, 2))
+        # b2 = torch.log(torch.pow(self.weight_b, 2))
         #total_loss = (loss1+loss2)*self.weight_a+rl_loss*self.weight_b
-        return loss * a1 + rl_loss * a2 + b1 + b2, loss, s_index, e_index
+        return rl_loss, s_index, e_index
+        # return loss * a1 + rl_loss * a2 + b1 + b2, loss, s_index, e_index
 
     def evaluate(self, c_vec, c_pos, c_mask, q_vec, q_pos, q_mask):
         s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_mask, q_vec, 
@@ -240,15 +259,15 @@ class MnemicReader(nn.Module):
 
         #s_prob = torch.squeeze(s_prob)
         #e_prob = torch.squeeze(e_prob)
-
+        # print(s_prob.shape, e_prob.shape)
         context_len = s_prob.shape[1]
         max_idx = torch.argmax(probs, dim=1)
         s_index = max_idx // context_len
         e_index = max_idx % context_len
-        decoder_input = self.prepare_decoder_input(s_index, e_index, c_vec)
+        # decoder_input = self.prepare_decoder_input(s_index, e_index, c_vec)
         # decode_input = self.prepare_decoder_input(s_index, e_index, con_vec)
         # generate_output = self.generative_decoder.generate(decode_input)
-        return s_index, e_index, decoder_input
+        return s_index, e_index#, decoder_input
 
 if __name__ == '__main__':
     loss = WordOverlapLoss()
@@ -286,10 +305,10 @@ if __name__ == '__main__':
     # s2 = w(s2)
 
     l = loss(s1.float(), s2.float(), torch.tensor([4,2]), torch.tensor([2,2]))
-    print(l)
+    # print(l)
     l = torch.mean(l)
     l.backward()
-    print(s2.grad)
+    # print(s2.grad)
     # seq_len = 60
     # seq_len2 = 40
     # batch = 2
