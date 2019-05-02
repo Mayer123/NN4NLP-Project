@@ -142,6 +142,11 @@ def train_full(args):
     w2i['<unk>'] = 1
     tag2i['<pad>'] = 0 
     tag2i['<unk>'] = 1
+    ner2i['<pad>'] = 0 
+    ner2i['<unk>'] = 1
+    c2i['<pad>'] = 0 
+    c2i['<unk>'] = 1
+
     logger.info('Converting to index')
     train = convert_fulltext(training_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=100, build_chunks=True)
     dev = convert_fulltext(dev_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=100, build_chunks=True)
@@ -154,12 +159,16 @@ def train_full(args):
     embeddings = torch.from_numpy(embeddings).float()
     fixed_embeddings = embeddings[trained_idx]
 
-    input_size = embeddings.shape[1] + args.pos_emb_size
+    input_size = embeddings.shape[1] + args.char_emb_size * 2 + args.pos_emb_size + args.ner_emb_size
     #use_cuda = False
     use_cuda = torch.cuda.is_available()
-    rc_model = e2e_MnemicReader(input_size, args.hidden_size, args.num_layers,
-                            args.pos_emb_size, embeddings, len(tag2i)+2, len(w2i)+4,
+    rc_model = e2e_MnemicReader(input_size, args.hidden_size, args.num_layers, 
+                            args.char_emb_size, args.pos_emb_size, args.ner_emb_size, 
+                            embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, len(common_vocab)+4,
                             args.emb_dropout, args.rnn_dropout)
+    # rc_model = e2e_MnemicReader(input_size, args.hidden_size, args.num_layers,
+    #                         args.pos_emb_size, embeddings, len(tag2i)+2, len(w2i)+4,
+    #                         args.emb_dropout, args.rnn_dropout)
     # ir_model = AttentionRM(rc_model.word_embeddings, rc_model.pos_emb, pos_vocab_size=len(tag2i))
     if args.load_ir_model == '':
         ir_model = KNRM(init_emb=embeddings)
@@ -169,7 +178,7 @@ def train_full(args):
     ag_model = None # AnswerGenerator(input_size, args.hidden_size, args.num_layers, rc_model.word_embeddings, embeddings.shape[1], len(common_vocab)+4, embeddings.shape[0], args.emb_dropout, args.rnn_dropout)
     model = EndToEndModel(ir_model, 
                             AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i)), 
-                            rc_model, ag_model, w2i)
+                            rc_model, ag_model, w2i, c2i)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
@@ -190,6 +199,9 @@ def train_full(args):
     pr = cProfile.Profile()
     for ITER in range(args.epochs):
         train_loss = 0.0
+        total_rc_loss = 0.0
+        total_ir1_loss = 0.0
+        total_ir2_loss = 0.0
         start_time = time.time()
         if not args.eval_only:
             model.train()
@@ -202,7 +214,7 @@ def train_full(args):
                 global_step += 1
                 local_step  += 1
                 #print (global_step)
-                q, passage, avec1, avec2, qlens, slens, alens, a1, a2, p_words = batch
+                q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, qlens, slens, alens, a1, a2, p_words = batch                
                 # print(q.dtype, passage.dtype, a.dtype, qlens.dtype, slens.dtype, alens.dtype)
                 # if global_step == 20:
                 #     pr.disable()
@@ -214,23 +226,31 @@ def train_full(args):
                 #q, passage, a, qlens, slens, alens, a1, a2 = batch
                 if use_cuda:
                     q = q.cuda()
+                    q_chars = q_chars.cuda()
                     passage = passage.cuda()
+                    passage_chars = passage_chars.cuda()
                     # avec1 = avec1.cuda()
                     # avec2 = avec2.cuda()
                     qlens = qlens.cuda()
                     slens = slens.cuda()
                     alens = alens.cuda()
 
-                batch_loss, sidx, eidx = model(q, passage, avec1, avec2, qlens, slens, alens, p_words, a1, a2)
+                rc_loss, ir1_loss, ir2_loss, sidx, eidx = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
+                                                qlens, slens, alens, p_words, a1, a2)
+                batch_loss = rc_loss+ir1_loss+ir2_loss                
                 optimizer.zero_grad()
                 batch_loss.backward()
 
                 train_loss += float(batch_loss)
+                total_rc_loss += float(rc_loss)
+                total_ir1_loss += float(ir1_loss)
+                total_ir2_loss += float(ir2_loss)
                 #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
                 optimizer.step()
 
                 reset_embeddings(rc_model.word_embeddings, embeddings, trained_idx)  
-                t.set_postfix(loss=train_loss/local_step)          
+                t.set_postfix(loss=train_loss/local_step, rc_loss=total_rc_loss/local_step, 
+                                ir1_loss=total_ir1_loss/local_step, ir2_loss=total_ir2_loss/local_step)          
                 # break
                 #rc_model.word_embeddings[0].weight.data[trained_idx] = fixed_embeddings
                 # pr.disable()
@@ -252,14 +272,16 @@ def train_full(args):
             gen_rouge = 0.
             count = 0
             for batch in dev_loader:
-                q, passage, avec1, avec2, qlens, slens, alens, a1, a2, p_words = batch
+                q, q_chars, passage, passage_chars, _, avec1, avec2, qlens, slens, alens, a1, a2, p_words = batch
                 count += q.shape[0]
                 if use_cuda:
                     q = q.cuda()
+                    q_chars = q_chars.cuda()
                     passage = passage.cuda()
+                    passage_chars = passage_chars.cuda()
                     qlens = qlens.cuda()
                     slens = slens.cuda()
-                sidx, eidx, context = model.evaluate(q, passage, qlens, slens, p_words)
+                sidx, eidx, context = model.evaluate(q, q_chars, passage, passage_chars, qlens, slens, p_words)
                 # dev_loss += 0# batch_loss.cpu().item()
                 # print(context)
 

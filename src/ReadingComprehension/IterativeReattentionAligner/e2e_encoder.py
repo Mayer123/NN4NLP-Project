@@ -51,14 +51,17 @@ class WordOverlapLoss(nn.Module):
 
 class MnemicReader(nn.Module):
     ## model(c_vec, c_pos, c_ner, c_em, c_mask, q_vec, q_pos, q_ner, q_em, q_mask, start, end)
-    def __init__(self, input_size, hidden_size, num_layers, pos_emb_dim, word_embeddings,
-                    num_pos, vocab_size, emb_dropout=0.0, rnn_dropout=0.0):
+    def __init__(self, input_size, hidden_size, num_layers, char_emb_dim, 
+                    pos_emb_dim, ner_emb_dim, word_embeddings, num_char, 
+                    num_pos, num_ner, vocab_size, emb_dropout=0.0, rnn_dropout=0.0):
         super(MnemicReader, self).__init__()
         self.num_layers = num_layers
         self.rnn = nn.ModuleList()
 
         self.pos_emb = nn.Embedding(num_pos, pos_emb_dim, padding_idx=0)
-        
+        self.ner_emb = nn.Embedding(num_ner, ner_emb_dim, padding_idx=0)
+        self.char_emb = nn.Embedding(num_char, char_emb_dim, padding_idx=0)
+
         self.vocab_size = vocab_size
         self.emb_size = word_embeddings.shape[1]
         self.word_embeddings = torch.nn.Embedding(word_embeddings.shape[0], word_embeddings.shape[1], 
@@ -80,6 +83,7 @@ class MnemicReader(nn.Module):
 
         self.rnn_dropout = nn.Dropout(rnn_dropout)
 
+        self.char_lstm = nn.LSTM(char_emb_dim, char_emb_dim, num_layers=1, bidirectional=True)
         for i in range(num_layers):
             lstm = nn.LSTM(input_size, hidden_size, num_layers=1, bidirectional=True)
             self.rnn.append(lstm)
@@ -101,7 +105,7 @@ class MnemicReader(nn.Module):
             decoder_input[i,e_index[i]-s_index[i]+2] = torch.Tensor([3]).long().to(context.device)
         return decoder_input
 
-    def char_lstm_forward(self, char, char_lens):
+    def char_lstm_forward(self, char, char_lens=None):
         # c_char is 3d (batch, words, chars)        
         char_squeezed = char.view(-1, char.size()[2])        
         char_e = self.char_emb(char_squeezed)
@@ -122,18 +126,27 @@ class MnemicReader(nn.Module):
 
         return con_char
 
-    def getAnswerSpanProbs(self, c_vec, c_pos, c_lens, q_vec, q_pos, q_lens):
+    def getAnswerSpanProbs(self, c_vec, c_pos, c_ner, c_char, c_lens, q_vec, q_pos, q_ner, q_char, q_lens):
         con_vec = self.emb_dropout(self.word_embeddings(c_vec))
         con_pos = self.emb_dropout(self.pos_emb(c_pos))
+        con_ner = self.emb_dropout(self.ner_emb(c_ner))
+
+        con_char = self.char_lstm_forward(c_char)
+        c_mask = output_mask(c_lens)
+        con_char *= c_mask.unsqueeze(2).float()
 
         que_vec = self.emb_dropout(self.word_embeddings(q_vec))
         que_pos = self.emb_dropout(self.pos_emb(q_pos))
+        que_ner = self.emb_dropout(self.ner_emb(q_ner))
 
-        con_input = torch.cat([con_vec, con_pos], 2)
-        que_input = torch.cat([que_vec, que_pos], 2)
+        que_char = self.char_lstm_forward(q_char)
+        q_mask = output_mask(q_lens)
+        que_char *= q_mask.unsqueeze(2).float()
+        
+        con_input = torch.cat([con_vec, con_char, con_pos, con_ner], 2)
+        que_input = torch.cat([que_vec, que_char, que_pos, que_ner], 2)
         x1 = con_input.transpose(0, 1)
-
-
+        
         x1_len, x1_sorted_idx = torch.sort(c_lens, descending=True)
         _, x1_rev_sorted_idx = torch.sort(x1_sorted_idx)
         packed_x1 = nn.utils.rnn.pack_padded_sequence(x1[:,x1_sorted_idx,:], x1_len)
@@ -174,12 +187,13 @@ class MnemicReader(nn.Module):
         # print ("=============>", s_prob.shape, e_prob.shape, probs.shape)
         return s_prob, e_prob, probs, final_context
 
-    def forward(self, c_vec, c_pos, c_lens, q_vec, q_pos, q_lens, context, a_vec, alen, a1, a2):
+    def forward(self, c_vec, c_pos, c_ner, c_char, c_lens, q_vec, q_pos, q_ner, q_char, q_lens, 
+                context, a_vec, alen, a1, a2):
         # print("-------------------------------------------------")
         # print(c_vec, c_pos, c_lens, q_vec, q_pos, q_lens, context, a_vec, alen)
 
-        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos,c_lens, 
-                                                                        q_vec, q_pos, q_lens)
+        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, c_lens, 
+                                                                        q_vec, q_pos, q_ner, q_char, q_lens)
         
 
         #print (torch.gather(s_prob.squeeze(), 1, start.unsqueeze(1)))
@@ -253,9 +267,9 @@ class MnemicReader(nn.Module):
         return rl_loss, s_index, e_index
         # return loss * a1 + rl_loss * a2 + b1 + b2, loss, s_index, e_index
 
-    def evaluate(self, c_vec, c_pos, c_mask, q_vec, q_pos, q_mask):
-        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_mask, q_vec, 
-                                                                        q_pos, q_mask)
+    def evaluate(self, c_vec, c_pos, c_ner, c_char, c_lens, q_vec, q_pos, q_ner, q_char, q_lens):
+        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, c_lens, 
+                                                                        q_vec, q_pos, q_ner, q_char, q_lens)
 
         #s_prob = torch.squeeze(s_prob)
         #e_prob = torch.squeeze(e_prob)

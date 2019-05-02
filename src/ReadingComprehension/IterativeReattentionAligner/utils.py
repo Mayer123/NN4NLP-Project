@@ -5,6 +5,7 @@ import random
 import torch
 import re
 import json
+from ReadingComprehension.IterativeReattentionAligner.CSMrouge import RRRouge
 
 def word_tokenize(text):
   """Split on whitespace and punctuation."""
@@ -31,6 +32,8 @@ class FulltextDataset(torch.utils.data.Dataset):
         batch = []
         count = 0
         for sample in data:  
+            # if len(batch) == 2:
+            #     break
             if len(batch) == 0:
                 batch.append(sample)
             elif sample[0] != batch[-1][0]:
@@ -67,7 +70,7 @@ def mCollateFn(batch):
     assert len(batch) == 1
     batch = batch[0]
     idset = []
-    for i, (cid,qw,qt,qn,qc,a1,a2,p) in enumerate(batch):
+    for i, (cid,qw,qt,qn,qc,a1,a2,p) in enumerate(batch):        
         #for i, (cid,qw,qt,qn,qc,a1,a2,p) in enumerate(sample):
         idset.append(cid)
         Qwords.append(qw)
@@ -79,7 +82,10 @@ def mCollateFn(batch):
         if i == 0:
             Passages = [sent[0] for sent in p]
             Passagestags = [sent[1] for sent in p]
+            Passagesners = [sent[2] for sent in p]
+            Passageschars = [sent[3] for sent in p]
             Passageswords = [sent[4] for sent in p]
+            Passagesrouge = [sent[5] for sent in p]
     assert len(set(idset)) == 1
     #max_q_len = max([len(q) for q in Qwords])
     #max_p_len = max([len(p) for p in Passages])
@@ -87,30 +93,48 @@ def mCollateFn(batch):
     #max_a_len = max([len(a) for a in A1])
 
     qlens = torch.tensor([len(q) for q in Qwords]).long()
+    qclens = torch.tensor([len(qc) for qc in Qchars]).long()
     #plens = torch.tensor([len(p) for p in Passages]).long()
     slens = torch.tensor([len(s) for s in Passages]).long()   # The assumption is that passages in one batch are all the same
+    sclens = torch.tensor([len(pc) for pc in Passageschars]).long()
     alens = torch.tensor([len(a) for a in A1]).long()
     max_q_len = torch.max(qlens)
+    max_qc_len = torch.max(qclens)
     max_s_len = torch.max(slens)
+    max_sc_len = torch.max(sclens)
     max_a_len = torch.max(alens)
+
     Qtensor = torch.zeros(len(batch), max_q_len).long()
     Qtagtensor = torch.zeros(len(batch), max_q_len).long()
+    Qnertensor = torch.zeros(len(batch), max_q_len).long()
+    Qchartensor = torch.zeros(len(batch), max_q_len, 16).long()
+
     Ptensor = torch.zeros(len(Passages), max_s_len).long()
     Ptagtensor = torch.zeros(len(Passages), max_s_len).long()
+    Pnertensor = torch.zeros(len(Passages), max_s_len).long()
+    Pchartensor = torch.zeros(len(Passages), max_s_len, 16).long()    
+    Prougetensor = torch.FloatTensor(Passagesrouge)
+    
     A1tensor = torch.zeros(len(batch), max_a_len).long() 
     A2tensor = torch.zeros(len(batch), max_a_len).long()    
     for i in range(len(batch)):
         Qtensor[i, :qlens[i]] = torch.tensor(Qwords[i])
         Qtagtensor[i, :qlens[i]] = torch.tensor(Qtags[i])
+        Qnertensor[i, :qlens[i]] = torch.tensor(Qners[i])
+        Qchartensor[i, :qclens[i]] = torch.tensor(Qchars[i])
         # A1tensor[i, :alens[i]] = torch.tensor(A1[i])
         # A2tensor[i, :alens[i]] = torch.tensor(A2[i])
         if i == 0:
             for j in range(len(Passages)):
                 Ptensor[j,:slens[j]] = torch.tensor(Passages[j])
                 Ptagtensor[j,:slens[j]] = torch.tensor(Passagestags[j])
-    Ptensor = torch.cat([Ptensor.unsqueeze(2), Ptagtensor.unsqueeze(2)], dim=2)
-    Qtensor = torch.cat([Qtensor.unsqueeze(2), Qtagtensor.unsqueeze(2)], dim=2)
-    return Qtensor, Ptensor, None, None, qlens, slens, alens, A1, A2, Passageswords
+                Pnertensor[j,:slens[j]] = torch.tensor(Passagesners[j])
+                Pchartensor[j,:sclens[j]] = torch.tensor(Passageschars[j])                
+    Ptensor = torch.cat([Ptensor.unsqueeze(2), Ptagtensor.unsqueeze(2), 
+                            Pnertensor.unsqueeze(2)], dim=2)
+    Qtensor = torch.cat([Qtensor.unsqueeze(2), Qtagtensor.unsqueeze(2), 
+                            Qnertensor.unsqueeze(2)], dim=2)
+    return Qtensor, Qchartensor, Ptensor, Pchartensor, Prougetensor, None, None, qlens, slens, alens, A1, A2, Passageswords
 
 def build_fulltext_dicts(data, min_occur=100):
     w2i = Counter()
@@ -134,9 +158,12 @@ def build_fulltext_dicts(data, min_occur=100):
         else:
             for para in context:
                 for sent in para:
-                    for w in sent[1]:
-                        w2i[w] += 1
-                        tag2i[w] += 1
+                    for i in range(len(sent[1])):
+                        w2i[sent[1][i]] += 1
+                        tag2i[sent[2][i]] += 1
+                        ner2i[sent[3][i]] += 1
+                    for c in sent[0]:
+                        c2i[c] += 1
     word_dict = {}
     tag_dict = {}
     ner_dict = {}
@@ -146,16 +173,27 @@ def build_fulltext_dicts(data, min_occur=100):
         if v >= min_occur:
             common_vocab[k] = i + 4                         # <SOS> for 2 <EOS> for 3
         word_dict[k] = i + 4 
+
     for i, (k, v) in enumerate(tag2i.most_common()):
         tag_dict[k] = i + 2
+
+    for i, (k, v) in enumerate(ner2i.most_common()):
+        ner_dict[k] = i + 2
+
+    for i, (k, v) in enumerate(c2i.most_common()):
+        char_dict[k] = i + 2
 
     for k,v in common_vocab.items():
         assert v == word_dict[k]
     return word_dict, tag_dict, ner_dict, char_dict, common_vocab
 
 
-def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, build_chunks=False):
+def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, 
+                        build_chunks=False):
+    max_word_len = 16
     context_cache = {}
+    words2charIds = lambda W: [[c2i.get(w[i], c2i['<unk>']) if i < len(w) else c2i['<pad>'] for i in range(max_word_len)] for w in W]
+    r = RRRouge()
     for cid in tqdm.tqdm(data):
         context = data[cid]['full_text']
         for q in data[cid]['qaps']:
@@ -171,15 +209,21 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, b
                 target_aidx = [common_vocab.get(w, w2i['<unk>']) for w in q['answer2_tokens']]  
             a1_string = q['answers'][0]
             a2_string = q['answers'][1]
-            #qners = [ner2i.get(w, ner2i['<unk>']) for w in q['question_ner']]
-            #qchars = [[c2i.get(c, c2i['<unk>']) for c in w] for w in q['question_tokens']]
+            qners = [ner2i.get(w, ner2i['<unk>']) for w in q['question_ner']]
+            qchars = words2charIds(q['question_tokens'])
+            rouge = 0
+
+            rouge_scores = {}
+            for (paraI, sentI, score) in q['full_text_scores']:
+                rouge_scores[(paraI, sentI)] = score
+
             if cid in context_cache:
                 passage_idxs = context_cache[cid]
             else:
                 passage_idxs = []
                 if not build_chunks:
-                    for para in context:
-                        for sent in para:
+                    for paraI, para in enumerate(context):
+                        for sentI, sent in enumerate(para):
                             words = sent[1]
                             pos = sent[2]
                             ner = sent[3]
@@ -187,8 +231,9 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, b
                             charidx = []
                             widx = [w2i.get(w, w2i['<unk>']) for w in words]
                             posidx = [tag2i.get(p, tag2i['<unk>']) for p in pos]
-                            #neridx = [ner2i.get(n, ner2i['<unk>']) for n in ner]
-                            #charidx = [[c2i.get(c, c2i['<unk>']) for c in w] for w in words]
+                            neridx = [ner2i.get(n, ner2i['<unk>']) for n in ner]
+                            charidx = words2charIds(words)
+                            rouge = rouge_scores.get((paraI, sentI), 0.0)
                             if max_len is not None and len(widx) > max_len:
                                 curr = 0
                                 while curr+max_len < len(widx):
@@ -196,7 +241,7 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, b
                                     curr += max_len
                                 passage_idxs.append((widx[curr:], posidx[curr:], [], [], words[curr:]))
                             else:
-                                passage_idxs.append((widx, posidx, neridx, charidx, words))
+                                passage_idxs.append((widx, posidx, neridx, charidx, words, rouge))
                 else:
                     assert max_len is not None
                     widx = []
@@ -204,40 +249,64 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, b
                     neridx = []
                     charidx = []
                     words_buff = []
-                    for para in context:
-                        for sent in para:
+                    for paraI, para in enumerate(context):
+                        for sentI, sent in enumerate(para):
                             words = sent[1]
                             pos = sent[2]
                             ner = sent[3]
+                            # rouge = max(rouge, r.calc_score([" ".join(words)], [a1_string, a2_string]))
+                            rouge = max(rouge, rouge_scores.get((paraI, sentI), 0.0))
+                            # print(rouge)                            
                             tmp_w = [w2i.get(w, w2i['<unk>']) for w in words]
                             tmp_pos = [tag2i.get(p, tag2i['<unk>']) for p in pos]
+                            tmp_ner = [ner2i.get(n, ner2i['<unk>']) for n in ner]
                             if len(tmp_w) > max_len:
                                 if len(widx) != 0:
-                                    passage_idxs.append((widx, posidx, neridx, charidx, words_buff))
+                                    # print(1, rouge)
+                                    passage_idxs.append((widx, posidx, neridx, words2charIds(words_buff), 
+                                                        words_buff, rouge))
+                                    rouge = 0                                    
                                     widx = []
                                     posidx = []
+                                    neridx = []
                                     words_buff = []
                                 curr = 0
                                 while curr+max_len < len(tmp_w):
-                                    passage_idxs.append((tmp_w[curr:curr+max_len], tmp_pos[curr:curr+max_len], [], [], words[curr:curr+max_len]))
+                                    _words = words[curr:curr+max_len]
+                                    # print(2, rouge)
+                                    passage_idxs.append((tmp_w[curr:curr+max_len], 
+                                                        tmp_pos[curr:curr+max_len], 
+                                                        tmp_ner[curr:curr+max_len], 
+                                                        words2charIds(_words), _words, rouge))
+                                    rouge = 0                                    
                                     curr += max_len
                                 assert len(widx) == 0
                                 widx.extend(tmp_w[curr:])
                                 posidx.extend(tmp_pos[curr:])
+                                neridx.extend(tmp_ner[curr:])
                                 words_buff.extend(words[curr:])
                             elif len(tmp_w) + len(widx) > max_len:
-                                passage_idxs.append((widx, posidx, neridx, charidx, words_buff))
+                                # print(3, rouge)
+                                passage_idxs.append((widx, posidx, neridx, words2charIds(words_buff), 
+                                                    words_buff, rouge)) 
+                                rouge = 0                               
                                 widx = tmp_w
                                 posidx = tmp_pos
+                                neridx = tmp_ner
                                 words_buff = words
                             else:
                                 widx.extend(tmp_w)
                                 posidx.extend(tmp_pos)
+                                neridx.extend(tmp_ner)
                                 words_buff.extend(words)
                     if len(widx) > 0:
-                        passage_idxs.append((widx, posidx, neridx, charidx, words_buff))     
+                        # print(4, rouge)
+                        passage_idxs.append((widx, posidx, neridx, words2charIds(words_buff), 
+                                            words_buff, rouge))
+                        rouge = 0                        
                 context_cache[cid] = passage_idxs
             if len(passage_idxs) > 0:
+                # print(passage_idxs[-1])
                 yield(cid, qidx, qtags, qners, qchars, a1_string, a2_string, passage_idxs)
                 # yield(cid, qidx, qtags, qners, qchars, real_aidx, target_aidx, passage_idxs)
 
