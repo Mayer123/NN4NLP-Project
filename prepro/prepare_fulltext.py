@@ -13,10 +13,13 @@ from CSMrouge import RRRouge
 import multiprocessing as mp
 from collections import Counter
 import pickle
+import string
+import re
 rouge = RRRouge()
 nlp = en_core_web_sm.load()
 ps = PorterStemmer()
-
+with open('stopwords.json', 'r') as f:
+    stopwords = json.load(f)
 def check_file_exist(path):
     files = [f.split('.')[0] for f in listdir(path) if isfile(join(path, f)) and f[-4:] == '.txt']
     print (len(files))
@@ -74,6 +77,30 @@ def reading_books(path, name):
        json.dump(new_content, fout)
     return new_content
 
+def _normalize_answer(s):
+  """Lower text and remove punctuation, articles and extra whitespace.
+  Directly copied from official SQuAD eval script, SHOULD NOT BE MODIFIED.
+  Args:
+    s: Input text.
+  Returns:
+    Normalized text.
+  """
+
+  def remove_articles(text):
+    return re.sub(r'\b(a|an|the)\b', ' ', text)
+
+  def white_space_fix(text):
+    return ' '.join(text.split())
+
+  def remove_punc(text):
+    exclude = set(string.punctuation)
+    return ''.join(ch for ch in text if ch not in exclude)
+
+  def lower(text):
+    return text.lower()
+
+  return white_space_fix(remove_articles(remove_punc(lower(s))))
+
 def build_sample(bundle):
     i, content, a1, a2 = bundle
     #print (a1, a2)
@@ -83,7 +110,8 @@ def build_sample(bundle):
     scores = []
     for j, para in enumerate(content):
         for k, sent in enumerate(para):
-            curr = rouge.calc_score([sent[0]], [a1, a2])
+            cand = ' '.join([w for w in sent[1] if w not in stopwords])
+            curr = rouge.calc_score([_normalize_answer(cand)], [_normalize_answer(a1), _normalize_answer(a2)])
             count += 1
             if curr != 0:
                 scores.append((j, k, curr))
@@ -173,11 +201,11 @@ def process_data(path, path1):
         else:
             print ('what the fuck')
 
-    with open('narrativeqa_train_fulltext_redo.pickle', 'wb') as f:
+    with open('narrativeqa_train_fulltext_wostop.pickle', 'wb') as f:
         pickle.dump(train, f)
-    with open('narrativeqa_dev_fulltext_redo.pickle', 'wb') as f:
+    with open('narrativeqa_dev_fulltext_wostop.pickle', 'wb') as f:
         pickle.dump(dev, f)
-    with open('narrativeqa_test_fulltext_redo.pickle', 'wb') as f:
+    with open('narrativeqa_test_fulltext_wostop.pickle', 'wb') as f:
         pickle.dump(test, f)
     # with open('narrativeqa_train_fulltext.json', 'w') as f:
     #     json.dump(train, f)

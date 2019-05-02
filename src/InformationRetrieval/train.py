@@ -307,15 +307,16 @@ def score_sentences(args):
     logger.info('-' * 100)
     logger.info('Loading data')    
 
-    w2i = {'<pad>': 0,
-            '<unk>' : 1}
-    pos2i = w2i.copy()
-    w2i, pos2i = build_dict(args.train_file, w2i, pos2i)
-    print (len(w2i), len(pos2i))
-    with open('fulltext_dict.json', 'w') as fout:
-        json.dump(w2i, fout)
-    with open('fulltext_pos_dict.json', 'w') as fout:
-        json.dump(pos2i, fout)
+    # w2i = {'<pad>': 0,
+    #         '<unk>' : 1}
+    # pos2i = w2i.copy()
+    # w2i, pos2i = build_dict(args.train_file, w2i, pos2i)
+    # print (len(w2i), len(pos2i))
+    with open('fulltext_dict.json', 'r') as f:
+        w2i = json.load(f)
+    with open('fulltext_pos_dict.json', 'r') as f:
+        pos2i = json.load(f)
+
     train = convert_data(args.train_file, w2i, pos2i, update_dict=False)    
     train = FulltextDataset(train, args.train_batch_size)
     
@@ -375,21 +376,20 @@ def score_sentences(args):
                 p = p.cuda()
                 qlen = qlen.cuda()
                 plen = plen.cuda()
-            pred_score = model.forward_singleContext(q, p, qlen, plen, batch_size=1024)
+            pred_score = model.forward_singleContext(q, p, qlen, plen, batch_size=512)
             _, topk_idx = torch.topk(pred_score, min(50, plen.shape[0]), dim=1, sorted=False)     
             topk_idx = topk_idx.data
             for i in range(len(ques)):
                 selected_context = []
                 selected_scores = []
-                print (i, topk_idx[i,:], ids[i])
+                #print (i, topk_idx[i,:], ids[i])
                 for selected_idx in topk_idx[i,:]:
-                    print (cons[selected_idx])
+                    #print (cons[selected_idx])
                     selected_context.append(cons[selected_idx])
                     selected_scores.append(scores[i][selected_idx])
                 retrived_dev.append({'id':ids[i], 'qaps':ques[i], 'context':selected_context, 'scores':selected_scores})
-            exit(0)
     print (len(retrived_dev))
-    with open('retrived_dev.pickle', 'wb') as f:
+    with open('retrived_dev_conv.pickle', 'wb') as f:
         pickle.dump(retrived_dev, f)
 
 

@@ -21,9 +21,8 @@ class GaussianKernel(object):
 
 class AttentionRM(nn.Module):
 	"""docstring for ConvKNRM"""
-
 	def __init__(self, emb_layer=None, pos_emb_layer=None, init_emb=None, emb_trainable=True, vocab_size=None, 
-					pos_vocab_size=None, emb_dim=100, pos_emb_dim=50, dropout=0.3,
+					pos_vocab_size=None, emb_dim=100, pos_emb_dim=100, dropout=0.3,
 					use_rnn=True):
 		super(AttentionRM, self).__init__()
 		if emb_layer is not None:
@@ -41,7 +40,7 @@ class AttentionRM(nn.Module):
 			pos_emb_dim = self.pos_emb.weight.data.shape[1]
 		else:
 			self.pos_emb = nn.Embedding(pos_vocab_size, pos_emb_dim)
-		
+
 		self.emb_proj = nn.Linear(emb_dim+pos_emb_dim, emb_dim)
 
 		self.use_rnn = use_rnn
@@ -68,53 +67,46 @@ class AttentionRM(nn.Module):
 		self.interactive_aligner = InteractiveAligner(emb_dim)
 		self.self_aligner = SelfAligner(emb_dim)
 		self.summarizer = Summarizer(emb_dim)
-		self.emb_dropout = nn.Dropout(dropout, inplace=False)
+		self.dropout = nn.Dropout(dropout, inplace=False)
 
 	def embed(self, x):
-		xw_emb = self.emb_dropout(self.emb(x[:,:,0]))
-		xp_emb = self.emb_dropout(self.pos_emb(x[:,:,1]))
-		x_emb = self.emb_proj(torch.cat((xw_emb, xp_emb), dim=2))
+		x_emb = self.dropout(self.emb(x[:,:,0]))
+		# xp_emb = self.dropout(self.pos_emb(x[:,:,1]))
+		# x_emb = self.emb_proj(torch.cat((xw_emb, xp_emb), dim=2))
+
 		# print('x size:',x.nelement() * x.storage().element_size()/(1024**3))
 		# print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
 
 		return x_emb
 
 	def score(self, q_emb, d_emb, qlen, dlen):
-		# print('d_emb size:',d_emb.storage().size() * d_emb.storage().element_size()/(1024**3))
-		# print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
-
-		# d_emb = self.emb_dropout(d_emb)
-		# print(q_emb.shape, d_emb.shape)
-		# print('d_emb size:',d_emb.storage().size() * d_emb.storage().element_size()/(1024**3))
-		# print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
-
-		# print('q_emb size:',q_emb.storage().size() * q_emb.storage().element_size()/(1024**3))
-		# print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
 
 		qng, qng_len, _ = self.interactive_aligner(d_emb, q_emb,
-												dlen, qlen)
+												dlen, qlen)		
 		del d_emb
-		# print('qng size:',qng.storage().size() * qng.storage().element_size())
-		# print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
 
 		attendedD, attendedD_len, _ = self.self_aligner(qng, qng_len)
-		# print('attendedD size:',attendedD.storage().size() * attendedD.storage().element_size()/(1024**3))
-		# print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
+		attendedD = self.dropout(attendedD)
 		del qng
-		# print(attendedD.shape)
+
 		if self.use_rnn:
+			# sorted_len, sorted_idx = torch.sort(attendedD_len, descending=True)
+			# _, rev_sorted_idx = torch.sort(sorted_idx)
+
+			# attendedD = torch.nn.utils.rnn.pack_padded_sequence(attendedD[sorted_idx], sorted_len, batch_first=True)
 			encoded,_ = self.evidence_collector(attendedD)
-			# print(encoded.shape)
+			# encoded,_ = torch.nn.utils.rnn.pad_packed_sequence(attendedD, batch_first=True)
+			# encoded = encoded[rev_sorted_idx]
+
 			encoded = self.evidence_proj(encoded)
 		else:
-			encoded = self.evidence_collector(attendedD.transpose(1,2))			
-			# print('encoded size:',encoded.storage().size() * encoded.storage().element_size()/(1024**3))
-			# print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
-			# print ('encoded.shape:', encoded.shape)						
+			encoded = self.evidence_collector(attendedD.transpose(1,2))		
 			encoded = encoded.transpose(1,2)
 
+		encoded = self.dropout(encoded)
+
 		s = self.summarizer(q_emb, qlen)
-		s = s.expand(s.shape[0], encoded.shape[1], s.shape[2])	
+		s = s.expand(s.shape[0], encoded.shape[1], s.shape[2])
 
 		catted = torch.cat((encoded, s, encoded*s, encoded-s), dim=2)
 		del encoded
@@ -124,21 +116,6 @@ class AttentionRM(nn.Module):
 		return score		
 
 	def forward(self, q, d, qlen, dlen):
-		# print('d size:',d.nelement() * d.storage().element_size()/(1024**3))
-		# print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
-		# qw_emb = self.emb_dropout(self.emb(q[:,:,0]))
-		# qp_emb = self.emb_dropout(self.pos_emb(q[:,:,1]))
-		# q_emb = self.emb_proj(torch.cat((qw_emb, qp_emb), dim=2))
-		
-		# dw_emb = self.emb_dropout(self.emb(d[:,:,0]))
-		# # print('dw_emb size:',dw_emb.storage().size() * dw_emb.storage().element_size()/(1024**3))
-		# # print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)
-		# dp_emb = self.emb_dropout(self.pos_emb(d[:,:,1]))
-		# # print('dp_emb size:',dp_emb.storage().size() * dp_emb.storage().element_size()/(1024**3))
-		# # print('total_mem_used', torch.cuda.memory_allocated(0) / (1024)**3)			
-		
-		# d_emb = self.emb_proj(torch.cat((dw_emb, dp_emb), dim=2))		
-
 		q_emb = self.embed(q)
 		d_emb = self.embed(d)
 		score = self.score(q_emb, d_emb, qlen, dlen)
@@ -164,8 +141,8 @@ class AttentionRM(nn.Module):
 		q = self.embed(q)
 		d = self.embed(d)
 
-		scores = []		
-		for i in range(q.shape[0]):			
+		scores = []
+		for i in range(q.shape[0]):
 			q_ = q[i, :qlen[i]]
 			q_ = q_.expand(d.shape[0], -1, -1)
 

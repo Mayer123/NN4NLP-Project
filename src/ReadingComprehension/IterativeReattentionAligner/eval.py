@@ -1,3 +1,5 @@
+import sys
+sys.path.append('../../')
 import json
 from collections import defaultdict, Counter
 import numpy as np
@@ -13,10 +15,10 @@ from encoder import MnemicReader
 import cProfile, pstats, io
 #from bleu import compute_bleu
 from nltk.translate.bleu_score import sentence_bleu, corpus_bleu
-import sacrebleu
+#import sacrebleu
 from CSMrouge import RRRouge
 from bleu import Bleu
-from run import build_dicts,convert_data,generate_embeddings,compute_scores,TextDataset,pad_sequence
+from run import generate_embeddings,compute_scores,pad_sequence
 
 def add_arguments(parser):
     parser.add_argument("eval_file", help="File that contains evaluation data")    
@@ -32,6 +34,62 @@ def add_arguments(parser):
     parser.add_argument('--pos_emb_size', type=int, default=50, help='Embedding size for pos tags')
     parser.add_argument('--ner_emb_size', type=int, default=50, help='Embedding size for ner')
     parser.add_argument('--log_file', type=str, default="RMR-eval.log", help='path to the log file')    
+
+class TextDataset(torch.utils.data.Dataset):
+
+    def __init__(self, data):
+        data.sort(key=lambda x: len(x[0]))
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        sample = self.data[idx]
+        return sample[0], sample[1], sample[2], sample[3], sample[4], sample[5], sample[6], sample[7], sample[8]\
+        , sample[9], sample[10], sample[11], sample[12], sample[13], sample[14], sample[15], sample[16], sample[17]
+
+def convert_data(data, w2i, tag2i, ner2i, c2i, max_len=-1):
+    for i, sample in enumerate(data):
+        context_vector = [w2i[w] if w in w2i else 1 for w in sample['context_tokens']]
+        context_pos_vec = [tag2i[t] if t in tag2i else 1 for t in sample['context_pos']]
+        context_ner_vec = [ner2i[e] if e in ner2i else 1 for e in sample['context_ner']]
+        context_character = [[c2i[c] if c in c2i else 1 for c in w] for w in sample['context_tokens']]
+        question_vector = [w2i[w] if w in w2i else 1 for w in sample['question_tokens']]
+        question_pos_vec = [tag2i[t] if t in tag2i else 1 for t in sample['question_pos']]
+        question_ner_vec = [ner2i[e] if e in ner2i else 1 for e in sample['question_ner']]
+        question_character = [[c2i[c] if c in c2i else 1 for c in w] for w in sample['question_tokens']]
+        context_em = sample['context_em_feature']
+        context_tokens = sample['context_tokens']
+        answer1 = sample['answers'][0].lower()
+        answer2 = sample['answers'][1].lower()
+        ans_start = sample['start_index']
+        ans_end = sample['end_index']
+        if max_len != -1 and len(context_vector) > max_len:
+            if sample['start_index'] >= max_len or sample['end_index'] >= max_len: 
+                new_start = len(context_vector) - max_len
+                if new_start > sample['start_index']:
+                    print('This context is too long')
+                    continue
+                    #print (current_len)
+                context_vector = context_vector[new_start:new_start+max_len]
+                context_pos_vec = context_pos_vec[new_start:new_start+max_len]
+                context_ner_vec = context_ner_vec[new_start:new_start+max_len]
+                context_character = context_character[new_start:new_start+max_len]
+                context_em = context_em[new_start:new_start+max_len]
+                context_tokens = context_tokens[new_start:new_start+max_len]
+                ans_start = ans_start - new_start
+                ans_end = ans_end - new_start
+            else:
+                context_vector = context_vector[:max_len]
+                context_pos_vec = context_pos_vec[:max_len]
+                context_ner_vec = context_ner_vec[:max_len]
+                context_character = context_character[:max_len]
+                context_em = context_em[:max_len]
+                context_tokens = context_tokens[:max_len]
+        yield (context_vector, context_pos_vec, context_ner_vec, context_character, context_em, \
+            question_vector, question_pos_vec, question_ner_vec, question_character, sample['question_em_feature'], ans_start, ans_end, \
+            context_tokens, sample['question_tokens'], sample['chosen_answer'], answer1, answer2, sample['_id'])
 
 def main(args):
     global logger
@@ -95,8 +153,8 @@ def main(args):
         nlloss = torch.nn.NLLLoss()
         for batch in eval_loader:
             c_vec, c_pos, c_ner, c_char, c_em, q_vec, q_pos, q_ner, q_char, q_em, start, end, c, q, c_a, a1, a2, _id = batch
-            c_vec, c_pos, c_ner, c_em, c_char, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
-            q_vec, q_pos, q_ner, q_em, q_char, q_mask = pad_sequence(q_vec, q_pos, q_ner, q_char, q_em)
+            c_vec, c_pos, c_ner, c_em, c_char, c_char_lens, c_mask = pad_sequence(c_vec, c_pos, c_ner, c_char, c_em)
+            q_vec, q_pos, q_ner, q_em, q_char, q_char_lens, q_mask = pad_sequence(q_vec, q_pos, q_ner, q_char, q_em)
             start = torch.as_tensor(start)
             end = torch.as_tensor(end)
             c_em = c_em.float()
@@ -115,7 +173,7 @@ def main(args):
                 q_em = q_em.cuda()
                 q_mask = q_mask.cuda()
 
-            pred_start, pred_end, s_prob, e_prob = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_mask)
+            pred_start, pred_end, s_prob, e_prob = model.evaluate(c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, c)
             loss1 = nlloss(s_prob.cpu(), start)
             loss2 = nlloss(e_prob.cpu(), end)
             CE_loss = loss1 + loss2

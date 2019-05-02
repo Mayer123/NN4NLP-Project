@@ -280,9 +280,19 @@ def main(args):
         [w2i, tag2i, ner2i, c2i, common_vocab] = dicts
     else:
         w2i, tag2i, ner2i, c2i, common_vocab = build_dicts(training_data)
+        # with open('dicts/word_dict.json', 'w') as f:
+        #     json.dump(w2i, f)
+        # with open('dicts/tag_dict.json', 'w') as f:
+        #     json.dump(tag2i, f)
+        # with open('dicts/ner_dict.json', 'w') as f:
+        #     json.dump(ner2i, f)
+        # with open('dicts/char_dict.json', 'w') as f:
+        #     json.dump(c2i, f)
+        # with open('dicts/common_vocab.json', 'w') as f:
+        #     json.dump(common_vocab, f)
     print (len(w2i), len(tag2i), len(ner2i), len(c2i), len(common_vocab))
     train = convert_data(training_data, w2i, tag2i, ner2i, c2i, common_vocab, 800)
-    dev = convert_data(dev_data, w2i, tag2i, ner2i, c2i, common_vocab, 800)
+    dev = convert_data(dev_data, w2i, tag2i, ner2i, c2i, common_vocab)
     #dev = list(dev)[0:32]
     id2words = {}
     for k, v in common_vocab.items():
@@ -307,7 +317,7 @@ def main(args):
     else:
         model = torch.load(args.load_model)
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0005, weight_decay=0.0001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
                                                            factor=0.5, patience=0,
                                                            verbose=True)
