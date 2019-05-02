@@ -22,27 +22,17 @@ class GaussianKernel(object):
 		return sim
 		
 
-class ConvKNRM(nn.Module):
+class KNRM(nn.Module):
 	"""docstring for ConvKNRM"""
 	def __init__(self, init_emb=None, emb_trainable=True, vocab_size=None, 
-					emb_dim=100, nfilters=128, max_ngram=3, xmatch_ngrams=False, 
-					nkernels=11, sigma=0.1, exact_sigma=0.001, dropout=0.3):
-		super(ConvKNRM, self).__init__()
+					emb_dim=100, nkernels=11, sigma=0.1, exact_sigma=0.001, dropout=0.3):
+		super(KNRM, self).__init__()
 		if init_emb is not None:
 			self.emb = nn.Embedding.from_pretrained(init_emb, 
 										freeze=(not emb_trainable))
 		else:
 			self.emb = nn.Embedding(vocab_size, emb_dim)
-
-		self.convs = nn.ModuleList([])
-		for i in range(1,max_ngram+1):	
-			c = nn.Sequential(
-				nn.ConstantPad1d((0,i-1), 0.0),
-				nn.Conv1d(emb_dim, nfilters, i),
-				nn.Tanh()
-				)					
-			self.convs.append(c)
-
+		
 		self.kernels = []
 		for i in range(nkernels):
 			mu = 1/(nkernels-1) + 2*i/(nkernels-1) - 1
@@ -51,55 +41,27 @@ class ConvKNRM(nn.Module):
 				self.kernels.append(GaussianKernel(1., exact_sigma))
 			else:
 				self.kernels.append(GaussianKernel(mu, sigma))
+		
 
-		self.xmatch_ngrams = xmatch_ngrams
-
-		self.evidence_collector = nn.Sequential(
-			nn.Conv1d(emb_dim, emb_dim, 5, padding=2),			
-			nn.ReLU(),
-			nn.Dropout(dropout),
-			nn.Conv1d(emb_dim, emb_dim, 3, padding=1)
-			)	
-
-		self.interactive_aligner = InteractiveAligner(emb_dim)
-		self.self_aligner = SelfAligner(emb_dim)
-		self.summarizer = Summarizer(emb_dim)
-
-		self.linear = nn.Linear(nkernels * max_ngram**(1 + int(xmatch_ngrams)), 1, bias=False)
+		self.linear = nn.Linear(nkernels, 1, bias=False)
 		self.dropout = nn.Dropout(dropout)
 	def embed(self, x):
 		x_emb = self.dropout(self.emb(x[:,:,0]))
 		return x_emb
 
 	def score(self, q_emb, d_emb, qlen, dlen):
-		q_conv = [conv(q_emb.transpose(1,2)) for conv in self.convs]
-		d_conv = [conv(d_emb.transpose(1,2)) for conv in self.convs]
+		sim = torch.bmm(q_emb, d_emb.transpose(1,2))
+		sim = self.dropout(sim)
 
-		counts = []
-		for qi in range(len(q_conv)):
-			for di in range(len(d_conv)):
-				if not self.xmatch_ngrams and qi != di:
-					continue
+		kernel_counts = []
+		for K in self.kernels:
+			probs = K(sim)					
+			qt_match_count = torch.sum(probs, dim=2)					
+			total_count = torch.sum(torch.log1p(qt_match_count), dim=1)
+			kernel_counts.append(total_count)
+		kernel_counts = torch.stack(kernel_counts, dim=1)
 
-				qng = q_conv[qi]
-				dng = d_conv[di]
-
-				sim = torch.bmm(qng.transpose(1,2), dng)
-				sim = self.dropout(sim)
-				# print(qng.shape, dng.shape, sim.shape)
-				kernel_counts = []
-				for K in self.kernels:
-					probs = K(sim)					
-					qt_match_count = torch.sum(probs, dim=2)					
-					total_count = torch.sum(torch.log1p(qt_match_count), dim=1)
-					kernel_counts.append(total_count)
-				kernel_counts = torch.stack(kernel_counts, dim=1)
-				# kernel_counts = torch.stack([K(sim) for K in self.kernels], dim=1)
-				# print(kernel_counts.shape)
-				counts.append(kernel_counts)
-		counts = torch.cat(counts, dim=1)
-		# print(counts.shape)		
-		score = self.linear(counts).squeeze(1)
+		score = self.linear(kernel_counts).squeeze(1)
 		return score
 
 	def forward(self, q, d, qlen, dlen):

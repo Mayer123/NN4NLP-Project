@@ -22,7 +22,7 @@ class TextDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         sample = self.data[idx]
         return sample[0], sample[1], sample[2], sample[3], sample[4], sample[5], sample[6], sample[7], sample[8]\
-        , sample[9], sample[10], sample[11], sample[12], sample[13], sample[14], sample[15], sample[16], sample[17], sample[18]
+        , sample[9], sample[10], sample[11], sample[12], sample[13], sample[14], sample[15], sample[16], sample[17], sample[18] #15, 16 are the answer
 
 class FulltextDataset(torch.utils.data.Dataset):
 
@@ -63,6 +63,7 @@ def mCollateFn(batch):
     A2 = []
     Passages = []
     Passagestags = []
+    Passageswords = []
     assert len(batch) == 1
     batch = batch[0]
     idset = []
@@ -78,6 +79,7 @@ def mCollateFn(batch):
         if i == 0:
             Passages = [sent[0] for sent in p]
             Passagestags = [sent[1] for sent in p]
+            Passageswords = [sent[4] for sent in p]
     assert len(set(idset)) == 1
     #max_q_len = max([len(q) for q in Qwords])
     #max_p_len = max([len(p) for p in Passages])
@@ -91,68 +93,153 @@ def mCollateFn(batch):
     max_q_len = torch.max(qlens)
     max_s_len = torch.max(slens)
     max_a_len = torch.max(alens)
-
     Qtensor = torch.zeros(len(batch), max_q_len).long()
     Qtagtensor = torch.zeros(len(batch), max_q_len).long()
     Ptensor = torch.zeros(len(Passages), max_s_len).long()
     Ptagtensor = torch.zeros(len(Passages), max_s_len).long()
-    Atensor = torch.zeros(len(batch), max_a_len).long()    
+    A1tensor = torch.zeros(len(batch), max_a_len).long() 
+    A2tensor = torch.zeros(len(batch), max_a_len).long()    
     for i in range(len(batch)):
         Qtensor[i, :qlens[i]] = torch.tensor(Qwords[i])
         Qtagtensor[i, :qlens[i]] = torch.tensor(Qtags[i])
-        Atensor[i, :alens[i]] = torch.tensor(A1[i])
+        # A1tensor[i, :alens[i]] = torch.tensor(A1[i])
+        # A2tensor[i, :alens[i]] = torch.tensor(A2[i])
         if i == 0:
             for j in range(len(Passages)):
                 Ptensor[j,:slens[j]] = torch.tensor(Passages[j])
                 Ptagtensor[j,:slens[j]] = torch.tensor(Passagestags[j])
     Ptensor = torch.cat([Ptensor.unsqueeze(2), Ptagtensor.unsqueeze(2)], dim=2)
     Qtensor = torch.cat([Qtensor.unsqueeze(2), Qtagtensor.unsqueeze(2)], dim=2)
-    return Qtensor, Ptensor, Atensor, qlens, slens, alens, A1, A2
+    return Qtensor, Ptensor, None, None, qlens, slens, alens, A1, A2, Passageswords
 
-def convert_fulltext(data, w2i, tag2i, ner2i, c2i, update_dict=True):   
+def build_fulltext_dicts(data, min_occur=100):
+    w2i = Counter()
+    tag2i = Counter()
+    ner2i = Counter()
+    c2i = Counter()
     context_cache = {}
     for cid in tqdm.tqdm(data):
         context = data[cid]['full_text']
         for q in data[cid]['qaps']:
-            qtags = qners = qchars = []
-            if update_dict:
-                qidx = [w2i.setdefault(w, len(w2i)) for w in q['question_tokens']]      
-                a1idx = [w2i.setdefault(w, len(w2i)) for w in q['answer1_tokens']]
-                a2idx = [w2i.setdefault(w, len(w2i)) for w in q['answer2_tokens']]
-                qtags = [tag2i.setdefault(w, len(tag2i)) for w in q['question_pos']]
-                #qners = [ner2i.setdefault(w, len(ner2i)) for w in q['question_ner']]
-                #qchars = [[c2i.setdefault(c, len(c2i)) for c in w] for w in q['question_tokens']]
+            for w in q['question_tokens']:
+                w2i[w] += 1
+            for w in q['answer1_tokens']:
+                w2i[w] += 1
+            for w in q['answer2_tokens']:
+                w2i[w] += 1
+            for w in q['question_pos']:
+                tag2i[w] += 1
+        if cid in context_cache:
+            continue
+        else:
+            for para in context:
+                for sent in para:
+                    for w in sent[1]:
+                        w2i[w] += 1
+                        tag2i[w] += 1
+    word_dict = {}
+    tag_dict = {}
+    ner_dict = {}
+    char_dict = {}
+    common_vocab = {}
+    for i, (k, v) in enumerate(w2i.most_common()):
+        if v >= min_occur:
+            common_vocab[k] = i + 4                         # <SOS> for 2 <EOS> for 3
+        word_dict[k] = i + 4 
+    for i, (k, v) in enumerate(tag2i.most_common()):
+        tag_dict[k] = i + 2
+
+    for k,v in common_vocab.items():
+        assert v == word_dict[k]
+    return word_dict, tag_dict, ner_dict, char_dict, common_vocab
+
+
+def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, build_chunks=False):
+    context_cache = {}
+    for cid in tqdm.tqdm(data):
+        context = data[cid]['full_text']
+        for q in data[cid]['qaps']:
+            qners = []
+            qchars = []
+            qidx = [w2i.get(w, w2i['<unk>']) for w in q['question_tokens']]       
+            qtags = [tag2i.get(w, tag2i['<unk>']) for w in q['question_pos']]
+            if random.random() > 0.5:
+                real_aidx = [w2i.get(w, w2i['<unk>']) for w in q['answer1_tokens']]
+                target_aidx = [common_vocab.get(w, w2i['<unk>']) for w in q['answer1_tokens']]  
             else:
-                qidx = [w2i.get(w, w2i['<unk>']) for w in q['question_tokens']]       
-                a1idx = [w2i.get(w, w2i['<unk>']) for w in q['answer1_tokens']]
-                a2idx = [w2i.get(w, w2i['<unk>']) for w in q['answer2_tokens']] 
-                qtags = [tag2i.get(w, tag2i['<unk>']) for w in q['question_pos']]   
-                #qners = [ner2i.get(w, ner2i['<unk>']) for w in q['question_ner']]
-                #qchars = [[c2i.get(c, c2i['<unk>']) for c in w] for w in q['question_tokens']]
+                real_aidx = [w2i.get(w, w2i['<unk>']) for w in q['answer2_tokens']]
+                target_aidx = [common_vocab.get(w, w2i['<unk>']) for w in q['answer2_tokens']]  
+            a1_string = q['answers'][0]
+            a2_string = q['answers'][1]
+            #qners = [ner2i.get(w, ner2i['<unk>']) for w in q['question_ner']]
+            #qchars = [[c2i.get(c, c2i['<unk>']) for c in w] for w in q['question_tokens']]
             if cid in context_cache:
                 passage_idxs = context_cache[cid]
             else:
                 passage_idxs = []
-                for para in context:
-                    for sent in para:
-                        words = sent[1]
-                        pos = sent[2]
-                        ner = sent[3]
-                        posidx = neridx = charidx = []
-                        if update_dict:
-                            widx = [w2i.setdefault(w, len(w2i)) for w in words]
-                            posidx = [tag2i.setdefault(p, len(tag2i)) for p in pos]
-                            #neridx = [ner2i.setdefault(n, len(ner2i)) for n in ner]
-                            #charidx = [[c2i.setdefault(c, len(c2i)) for c in w] for w in words]
-                        else:
+                if not build_chunks:
+                    for para in context:
+                        for sent in para:
+                            words = sent[1]
+                            pos = sent[2]
+                            ner = sent[3]
+                            neridx = []
+                            charidx = []
                             widx = [w2i.get(w, w2i['<unk>']) for w in words]
                             posidx = [tag2i.get(p, tag2i['<unk>']) for p in pos]
                             #neridx = [ner2i.get(n, ner2i['<unk>']) for n in ner]
                             #charidx = [[c2i.get(c, c2i['<unk>']) for c in w] for w in words]
-                        passage_idxs.append((widx, posidx, neridx, charidx))
+                            if max_len is not None and len(widx) > max_len:
+                                curr = 0
+                                while curr+max_len < len(widx):
+                                    passage_idxs.append((widx[curr:curr+max_len], posidx[curr:curr+max_len], [], [], words[curr:curr+max_len]))
+                                    curr += max_len
+                                passage_idxs.append((widx[curr:], posidx[curr:], [], [], words[curr:]))
+                            else:
+                                passage_idxs.append((widx, posidx, neridx, charidx, words))
+                else:
+                    assert max_len is not None
+                    widx = []
+                    posidx = [] 
+                    neridx = []
+                    charidx = []
+                    words_buff = []
+                    for para in context:
+                        for sent in para:
+                            words = sent[1]
+                            pos = sent[2]
+                            ner = sent[3]
+                            tmp_w = [w2i.get(w, w2i['<unk>']) for w in words]
+                            tmp_pos = [tag2i.get(p, tag2i['<unk>']) for p in pos]
+                            if len(tmp_w) > max_len:
+                                if len(widx) != 0:
+                                    passage_idxs.append((widx, posidx, neridx, charidx, words_buff))
+                                    widx = []
+                                    posidx = []
+                                    words_buff = []
+                                curr = 0
+                                while curr+max_len < len(tmp_w):
+                                    passage_idxs.append((tmp_w[curr:curr+max_len], tmp_pos[curr:curr+max_len], [], [], words[curr:curr+max_len]))
+                                    curr += max_len
+                                assert len(widx) == 0
+                                widx.extend(tmp_w[curr:])
+                                posidx.extend(tmp_pos[curr:])
+                                words_buff.extend(words[curr:])
+                            elif len(tmp_w) + len(widx) > max_len:
+                                passage_idxs.append((widx, posidx, neridx, charidx, words_buff))
+                                widx = tmp_w
+                                posidx = tmp_pos
+                                words_buff = words
+                            else:
+                                widx.extend(tmp_w)
+                                posidx.extend(tmp_pos)
+                                words_buff.extend(words)
+                    if len(widx) > 0:
+                        passage_idxs.append((widx, posidx, neridx, charidx, words_buff))     
                 context_cache[cid] = passage_idxs
             if len(passage_idxs) > 0:
-                yield(cid, qidx, qtags, qners, qchars, a1idx, a2idx, passage_idxs)
+                yield(cid, qidx, qtags, qners, qchars, a1_string, a2_string, passage_idxs)
+                # yield(cid, qidx, qtags, qners, qchars, real_aidx, target_aidx, passage_idxs)
 
 
 def build_dicts(data):    
@@ -183,7 +270,7 @@ def build_dicts(data):
     char_dict = {}
     common_vocab = {}
     for i, (k, v) in enumerate(w2i.most_common()):
-        if v >= 0:
+        if v >= 20:
             common_vocab[k] = i + 4                         # <SOS> for 2 <EOS> for 3
     for i, (k, v) in enumerate(w2i.most_common()):
         word_dict[k] = i + 4                         # <SOS> for 2 <EOS> for 3
@@ -218,7 +305,7 @@ def convert_data(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=-1):
         answer1 = sample['answers'][0].lower()
         answer2 = sample['answers'][1].lower()
         answer_tokens = word_tokenize(answer1) if random.random() < 0.5 else word_tokenize(answer2)
-        answer_vector = [common_vocab[w] if w in common_vocab else 1 for w in answer_tokens]+[3]
+        answer_vector = [2]+[common_vocab[w] if w in common_vocab else 1 for w in answer_tokens]+[3]
         ans_start = sample['start_index']
         ans_end = sample['end_index']
         if max_len != -1 and len(context_vector) > max_len:
@@ -295,5 +382,5 @@ def pad_answer(answers):
     return torch.as_tensor(ans_batch)
 
 def reset_embeddings(word_embeddings, fixed_embeddings, trained_idx):
-    word_embeddings.weight.data[trained_idx] = torch.FloatTensor(fixed_embeddings[trained_idx]).to(word_embeddings.weight.data.device)
+    word_embeddings.weight.data[trained_idx] = torch.FloatTensor(fixed_embeddings[trained_idx]).cuda()
     return 

@@ -211,8 +211,7 @@ class AligningBlock(nn.Module):
         dropped_Z = self.dropout(Z)
 
         packed_Z = rnn.pack_padded_sequence(dropped_Z, z_lens, batch_first=True)
-        R, (hidden_R,_) = self.evidence_collector(packed_Z)
-
+        R, _ = self.evidence_collector(packed_Z)        
         R, r_lens = rnn.pad_packed_sequence(R, batch_first=True)
 
         R = self.dropout(R) # c_check
@@ -224,7 +223,7 @@ class AligningBlock(nn.Module):
         Z = Z[rev_sorted_idxs]
         z_lens = z_lens[rev_sorted_idxs]
 
-        return R, hidden_R, Z, E, B, z_lens, z_lens, h_lens        
+        return R, Z, E, B, z_lens, z_lens, h_lens        
 
 class IterativeAligner(nn.Module):
     """docstring for IterativeAligner"""
@@ -241,27 +240,27 @@ class IterativeAligner(nn.Module):
             u_lens = torch.sum(u_mask, 1)
             v_lens = torch.sum(v_mask, 1)
 
-        R, hidden_R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(u, v, u_lens, v_lens)
+        R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(u, v, u_lens, v_lens)
         if self.niters > 1:
             Zs = [Z]
             Et = self.y * torch.bmm(E, B)
             Bt = self.y * torch.bmm(B, B)
 
             for i in range(self.niters-2):
-                R, hidden_R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(R, v,
+                R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(R, v,
                                                          r_lens, v_lens, Et=Et,
                                                          Bt=Bt)
                 Zs.append(Z)
                 Et = self.y * torch.bmm(E, B)
                 Bt = self.y * torch.bmm(B, B)
-            R, hidden_R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(R, v,
+            R, Z, E, B, r_lens, z_lens, h_lens = self.aligning_block(R, v,
                                                          r_lens, v_lens, Et=Et,
                                                          Bt=Bt, prev_Zs=Zs)
         
         p1, p2, p = self.answer_pointer(v, v_lens, R, r_lens)        
         # print "p1.shape", p1.shape
         # print 'p2.shape', p2.shape
-        return p1, p2, p, R, hidden_R
+        return p1, p2, p, R
         
 
 if __name__ == '__main__':

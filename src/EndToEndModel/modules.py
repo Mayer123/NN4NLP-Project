@@ -5,149 +5,166 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from utils import utils
-from InformationRetrieval.NoveltyNTN.modules import NoveltyNTN
-from utils.utils import output_mask
-
-class GaussianKernel(object):
-    """docstring for GaussianKernel"""
-    def __init__(self, mean, std):
-        super(GaussianKernel, self).__init__()
-        self.mean = mean
-        self.std = std
-
-    def __call__(self, x):
-        sim = torch.exp(-0.5 * (x-self.mean)**2 / self.std**2)      
-        return sim
-
-class WordOverlapLoss(nn.Module):
-    """docstring for StringOverlapLoss"""
-    def __init__(self):
-        super(WordOverlapLoss, self).__init__()
-        self.G = GaussianKernel(1.0, 0.001)
-
-    def forward(self, s1, s2, s1_len, s2_len):
-        # s1.shape = (batch, seq_len, emb_dim)
-        # s1 should be the true answer
-
-        normed_s1 = s1 / torch.norm(s1, dim=2, keepdim=True)
-        normed_s2 = s2 / torch.norm(s2, dim=2, keepdim=True)
-
-        cosine = torch.bmm(normed_s1, normed_s2.transpose(1,2)) # (batch, len(s1), len(s2))
-        cosine_em = self.G(cosine)
-        cosine_sm = cosine_em/(torch.sum(cosine_em, dim=2, keepdim=True) + 1e-10)
-        cosine_scaled = cosine_em * cosine_sm
-
-        mask = output_mask(s1_len)
-        max_match = torch.sum(cosine_scaled, dim=2)
-
-        max_match = max_match * mask
-        tot_match = torch.sum(max_match, dim=1)
-        ovrl = tot_match/s1_len.float()
-
-        loss = 1 - ovrl
-        return loss
+from ReadingComprehension.IterativeReattentionAligner.CSMrouge import RRRouge
 
 class EndToEndModel(nn.Module):
-	"""docstring for End2EndModel"""
-	def __init__(self, ir_model, rc_model, n_ctx_sents=50, include_novelty_score=False):
-		super(EndToEndModel, self).__init__()
-		self.ir_model1 = ir_model.eval()
-		self.ir_model2 = ir_model
-		self.rc_model = rc_model
-		self.n_ctx_sents = n_ctx_sents	
+    """docstring for End2EndModel"""
+    def __init__(self, ir_model1, ir_model2, rc_model, ag_model, w2i, n_ctx1_sents=6, n_ctx2_sents=20, chunk_size=15):
+        super(EndToEndModel, self).__init__()
+        self.ir_model1 = ir_model1
+        self.ir_model2 = ir_model2
+        self.rc_model = rc_model
+        self.ag_model = ag_model
+        self.n_ctx1_sents = n_ctx1_sents
+        self.n_ctx2_sents = n_ctx2_sents
+        self.chunk_size = chunk_size
+        self.i2w = {v:k for k,v in w2i.items()}
+        self.ir_loss = nn.NLLLoss()
+        self.rrrouge = RRRouge()
 
-		self.loss = WordOverlapLoss()
+    def idx2words(self, idxs):
+        return [self.i2w[i.data] for i in idxs]
 
-	# def getSentScores(self, q, c, qlen, clen, batch_size):
-	# 	scores = torch.zeros(c.shape[0]).float().to(c.device)
-	# 	n_batches = (c.shape[0] + batch_size - 1) // batch_size
-	# 	for i in range(n_batches):
-	# 		c_batch = c[i*batch_size:(i+1)*batch_size]			
-	# 		clen_batch = clen[i*batch_size:(i+1)*batch_size]
+    def getRouge(self, spans, a1, a2):        
+        return torch.Tensor([self.rrrouge.calc_score([" ".join(span)], [a1, a2]) for span in spans])
 
-	# 		q_batch = q[i*batch_size:(i+1)*batch_size]
-	# 		qlen_batch = qlen[i*batch_size:(i+1)*batch_size]
+    def getSpans(self, q, c, qlen, clen, p_words, a1=None, a2=None, c_batch_size=512):
+        # print(q.shape, c.shape, a.shape)
+        selected_sents = []     
+        string_sents = []
+                
+        self.ir_model1 = self.ir_model1.train()
+        # with torch.no_grad():        
 
-	# 		# print(c_batch.shape, clen_batch.shape)
-	# 		# print(q_batch.shape, qlen_batch.shape)
-	# 		scores[i*batch_size:(i+1)*batch_size] = self.ir_model(q_batch, c_batch, 
-	# 														qlen_batch, clen_batch)
-	# 	return scores
+        c_scores = self.ir_model1.forward_singleContext(q, c, qlen, clen,
+                                                    batch_size=c_batch_size)
+        c_scores = c_scores
+        c_scores = F.log_softmax(c_scores, dim=1)
 
-	def getSentScores(self, q, c, qlen, clen, batch_size):
-		return self.ir_model(q, c, qlen, clen)
+        if self.training:
+            best_sent_idx = []
+            for i in range(q.shape[0]):
+                rouge = self.getRouge(p_words, a1[i], a2[i])
+                best_i = torch.argmax(rouge, dim=0).to(c.device)
+                best_sent_idx.append(best_i)
+            best_sent_idx = torch.stack(best_sent_idx, dim=0)
+            ir1_loss = self.ir_loss(c_scores, best_sent_idx)
+        else:
+            ir1_loss = 0
 
-	def forward(self, q, c, a, qlen, clen, alen, c_batch_size=512):
-		# print(q.shape, c.shape, a.shape)
-		selected_sents = []		
-		top_sents = []
-		top_sents_len = []
-		# print(torch.cuda.memory_allocated(0) / (1024)**3)
-		with torch.no_grad():
-			c_scores = self.ir_model1.forward_singleContext(q, c, qlen, clen,
-														batch_size=c_batch_size)
-			
-			top_scores, topk_idx = torch.topk(c_scores, self.n_ctx_sents*2, dim=1, sorted=False)
-			
-			ctx1 = [c[topk_idx[i]] for i in range(len(c_scores))]
-			ctx_len1 = [clen[topk_idx[i]] for i in range(len(c_scores))]
-			
-			ctx1 = torch.stack(ctx1, dim=0)
-			ctx_len1 = torch.stack(ctx_len1, dim=0)			
-		
-		for i in range(len(ctx1)):
-			c_scores = self.ir_model2.forward_singleContext(q[[i]], ctx1[i], qlen[[i]], ctx_len1[i],
-															batch_size=c_batch_size)			
-			_, topk_idx = torch.topk(c_scores[0], self.n_ctx_sents, dim=0)
+        _, topk_idx_ir1 = torch.topk(c_scores, self.n_ctx1_sents, dim=1, sorted=False)
+        
+        ctx1 = [c[topk_idx_ir1[i]] for i in range(len(c_scores))]
+        ctx_len1 = [clen[topk_idx_ir1[i]] for i in range(len(c_scores))]
+        ctx1 = torch.stack(ctx1, dim=0)
+        ctx_len1 = torch.stack(ctx_len1, dim=0)
 
-			top_sents.append(ctx1[i, topk_idx[0]])
-			top_sents_len.append(ctx_len1[i, topk_idx[0]])
+        self.ir_model2 = self.ir_model2.train()
+        ir2_loss = 0
+        for i in range(len(ctx1)):
+            new_ctx = ctx1[i]
+            new_ctx = [new_ctx[j, :ctx_len1[i,j]] for j in range(len(new_ctx))]
+            new_ctx = torch.cat(new_ctx, dim=0) 
 
-			topk_idx, _ = torch.sort(topk_idx, descending=False)
+            if new_ctx.shape[0] // self.chunk_size > self.n_ctx2_sents:
+                new_pwords = []
+                for _idx in topk_idx_ir1[i]:
+                    new_pwords += p_words[_idx]
+                new_pwords = np.array(new_pwords)
 
-			sents = ctx1[i, topk_idx]			
-			sent_lens = ctx_len1[i, topk_idx]
-			sents = [sents[j,:sent_lens[j]] for j in range(self.n_ctx_sents)]
+                clip_idx = new_pwords.shape[0] % self.chunk_size
+                if clip_idx > 0:
+                    new_pwords = new_pwords[:-clip_idx]
+                new_pwords = new_pwords.reshape(-1, self.chunk_size)                
 
-			ctx2 = torch.cat(sents, dim=0)
+                clip_idx = new_ctx.shape[0] % self.chunk_size                
+                if clip_idx > 0:
+                    new_ctx = new_ctx[:-clip_idx]
+                new_ctx = new_ctx.view(-1, self.chunk_size, new_ctx.shape[1])
+                new_ctx_lens = torch.LongTensor([self.chunk_size]*new_ctx.shape[0]).to(ctx_len1.device)                          
 
-			selected_sents.append(ctx2)
+                c_scores = self.ir_model2.forward_singleContext(q[[i]], new_ctx, qlen[[i]], new_ctx_lens,
+                                                                batch_size=c_batch_size) 
+                c_scores = c_scores.squeeze(0)
+                c_scores = F.log_softmax(c_scores, dim=0)                
+                
+                _, topk_idx = torch.topk(c_scores, self.n_ctx2_sents, dim=0)  
 
-		top_sents = torch.stack(top_sents, dim=0)
-		top_sents_len = torch.stack(top_sents_len, dim=0)
+                sents = new_ctx[topk_idx]
+                sent_lens = new_ctx_lens[topk_idx]
+                sents = [sents[j,:sent_lens[j]] for j in range(self.n_ctx2_sents)]
+                ctx2 = torch.cat(sents, dim=0)
 
-		a_embed = self.ir_model2.emb(a)
-		c_embed = self.ir_model2.emb(top_sents[:,:,0])
+                string_sent = []
+                for _idx in topk_idx:
+                    string_sent.append(new_pwords[_idx])
+                string_sent = np.concatenate(string_sent, axis=0)
 
-		loss = self.loss(a_embed, c_embed, alen, top_sents_len)
-		if not torch.isfinite(loss).all():
-			print(top_sents)
-			print(top_sents_len)			
+                if self.training:
+                    p_words_rouge = self.getRouge(new_pwords, a1[i], a2[i])
+                    best_sent_idx = torch.argmax(p_words_rouge, dim=0).to(c_scores.device)                    
+                    ir2_loss += self.ir_loss(c_scores.unsqueeze(0), best_sent_idx.unsqueeze(0))
+            else:
+                ctx2 = new_ctx
+                string_sent = []
+                for _idx in topk_idx_ir1[i]:
+                    string_sent.append(p_words[_idx])
+                string_sent = np.concatenate(string_sent, axis=0)                
+            selected_sents.append(ctx2)            
+            
+            #string_sent = [w for s in string_sent for w in s]            
+            string_sents.append(string_sent)
 
-		loss = torch.mean(loss)
+        ctx_len = torch.tensor([len(s) for s in selected_sents]).long().to(c.device)
+        max_ctx_len = max(ctx_len)
 
-		return loss
-		# for i in range(len(c_scores)):
-		# 	_, topk_idx = torch.topk(c_scores[i], self.n_ctx_sents, dim=0)
+        ctx = torch.zeros(len(selected_sents), max_ctx_len, c.shape[2]).long().to(c.device)     
+        for (i, sents) in enumerate(selected_sents):
+            ctx[i,:len(sents)] = sents
 
-		# 	sents = c[topk_idx]
-		# 	sent_lens = clen[topk_idx]
-		# 	sents = [sents[j,:sent_lens[j]] for j in range(self.n_ctx_sents)]
+        ir2_loss /= q.shape[0]
+        return ctx, ctx_len, string_sents, ir2_loss+ir1_loss
 
-		# 	ctx = torch.cat(sents, dim=0)
+    def forward(self, q, c, avec1, avec2, qlen, clen, alen, p_words, a1, a2, c_batch_size=512):
+        ctx, ctx_len, string_sents, ir_loss = self.getSpans(q, c, qlen, clen, p_words, a1, a2, c_batch_size)        
+        # print(ctx.shape, q.shape) # batch, seq_len, [word_index, pos_index]
+        loss1, sidx, eidx = self.rc_model(ctx[:,:,0], ctx[:,:,1], ctx_len, 
+                                                q[:,:,0], q[:,:,1], qlen, 
+                                                string_sents, avec1, alen, a1, a2)
 
-		# 	selected_sents.append(ctx)
+        # print (loss1)
+        return loss1+ir_loss, sidx, eidx
+        
+        # print (sidx, eidx)
+        # raw_span = []
+        # for i in range(len(string_sents)):
+        #     print("*************")
+        #     print(len(string_sents[i]))
+        #     print( sidx[i] , eidx[i], eidx[i] - sidx[i])
+        #     print(len(string_sents[i][sidx[i]:eidx[i]+1]))
+        #     raw_span.append(['<sos>'] + string_sents[i][sidx[i]:eidx[i]+1] + ['<eos>'])
+        #     print (len(raw_span[-1]))
 
-		ctx_len = torch.tensor([len(s) for s in selected_sents]).long().to(c.device)
-		max_ctx_len = max(ctx_len)
+        # gen_loss, output = self.ag_model(extracted_span, avec2, raw_span)
 
-		ctx = torch.zeros(len(selected_sents), max_ctx_len, c.shape[2]).long().to(c.device)
-		for (i, sents) in enumerate(selected_sents):
-			ctx[i,:len(sents)] = sents
+        # return loss1+gen_loss
 
-		# print(type(ctx_len), type(qlen))
-		loss1, loss2, sidx, eidx = self.rc_model(ctx[:,:,0], ctx[:,:,1], ctx_len, 
-												q[:,:,0], q[:,:,1], qlen, 
-												None, a, alen)
-		return loss1
+    def evaluate(self, q, c, qlen, clen, p_words, c_batch_size=512):
+        ctx, ctx_len, string_sents, _ = self.getSpans(q, c, qlen, clen, p_words, 
+                                                    a1=None, a2=None, 
+                                                    c_batch_size=c_batch_size)
+        sidx, eidx = self.rc_model.evaluate(ctx[:,:,0], ctx[:,:,1], ctx_len, 
+                                                q[:,:,0], q[:,:,1], qlen)
+        # raw_span = []
+        # for i in range(len(string_sents)):
+        #     raw_span.append(['<sos>'] + string_sents[i][sidx[i]:eidx[i]+1] + ['<eos>'])
 
+        # gen_loss, output = self.ag_model(extracted_span, avec2, raw_span)
+        return sidx, eidx, string_sents
+        # return gen_loss
+
+        # # print(type(ctx_len), type(qlen))
+        # loss1, loss2, sidx, eidx = self.rc_model(ctx[:,:,0], ctx[:,:,1], ctx_len, 
+        #                                       q[:,:,0], q[:,:,1], qlen, 
+        #                                       None, a, alen)
+        # return loss1

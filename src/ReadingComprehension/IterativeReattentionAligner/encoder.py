@@ -128,36 +128,36 @@ class MnemicReader(nn.Module):
         con_input = torch.cat([con_vec, con_char, con_pos, con_ner, c_em.unsqueeze(2)], 2)
         que_input = torch.cat([que_vec, que_char, que_pos, que_ner, q_em.unsqueeze(2)], 2)
         x1 = con_input.transpose(0, 1)
-        x1_len, x1_sorted_idx = torch.sort(torch.sum(c_mask, dim=1), descending=True)
-        _, x1_rev_sorted_idx = torch.sort(x1_sorted_idx)
-        packed_x1 = nn.utils.rnn.pack_padded_sequence(x1[:,x1_sorted_idx,:], x1_len)
+        # x1_len, x1_sorted_idx = torch.sort(torch.sum(c_mask, dim=1), descending=True)
+        # _, x1_rev_sorted_idx = torch.sort(x1_sorted_idx)
+        # packed_x1 = nn.utils.rnn.pack_padded_sequence(x1[:,x1_sorted_idx,:], x1_len)
 
         x2 = que_input.transpose(0, 1)
-        x2_len, x2_sorted_idx = torch.sort(torch.sum(q_mask, dim=1), descending=True)
-        _, x2_rev_sorted_idx = torch.sort(x2_sorted_idx)
-        packed_x2 = nn.utils.rnn.pack_padded_sequence(x2[:,x2_sorted_idx,:], x2_len)
+        # x2_len, x2_sorted_idx = torch.sort(torch.sum(q_mask, dim=1), descending=True)
+        # _, x2_rev_sorted_idx = torch.sort(x2_sorted_idx)
+        # packed_x2 = nn.utils.rnn.pack_padded_sequence(x2[:,x2_sorted_idx,:], x2_len)
         
 
         enc_con = []
         enc_que = []
         for i in range(self.num_layers):
-            # x1 = self.rnn[i](x1)[0]
-            packed_x1 = self.rnn[i](packed_x1)[0]
-            x1, x1_len = nn.utils.rnn.pad_packed_sequence(packed_x1)
+            x1 = self.rnn[i](x1)[0]
+            # packed_x1 = self.rnn[i](packed_x1)[0]
+            # x1, x1_len = nn.utils.rnn.pad_packed_sequence(packed_x1)
             x1 = self.rnn_dropout(x1)      
-            # enc_con.append(x1)      
-            enc_con.append(x1[:,x1_rev_sorted_idx,:])            
+            enc_con.append(x1)      
+            # enc_con.append(x1[:,x1_rev_sorted_idx,:])            
 
-            # x2 = self.rnn[i](x2)[0]
-            packed_x2 = self.rnn[i](packed_x2)[0]
-            x2, x2_len = nn.utils.rnn.pad_packed_sequence(packed_x2)
+            x2 = self.rnn[i](x2)[0]
+            # packed_x2 = self.rnn[i](packed_x2)[0]
+            # x2, x2_len = nn.utils.rnn.pad_packed_sequence(packed_x2)
             x2 = self.rnn_dropout(x2)
-            # enc_que.append(x2)
-            enc_que.append(x2[:,x2_rev_sorted_idx,:])
+            enc_que.append(x2)
+            # enc_que.append(x2[:,x2_rev_sorted_idx,:])
             
-            if i < self.num_layers -1:
-                packed_x1 = nn.utils.rnn.pack_padded_sequence(x1, x1_len)
-                packed_x2 = nn.utils.rnn.pack_padded_sequence(x2, x2_len)
+            # if i < self.num_layers -1:
+            #     packed_x1 = nn.utils.rnn.pack_padded_sequence(x1, x1_len)
+            #     packed_x2 = nn.utils.rnn.pack_padded_sequence(x2, x2_len)
 
         enc_con = torch.cat(enc_con, 2).transpose(0, 1) # (batch_size, seq_len, enc_con_dim)
         enc_que = torch.cat(enc_que, 2).transpose(0, 1) # (batch_size, seq_len, enc_que_dim)            
@@ -233,9 +233,11 @@ class MnemicReader(nn.Module):
             print('bad probs')
             return
 
-        max_idx = torch.argmax(probs, dim=1)
-        s_index = max_idx // context_len
-        e_index = max_idx % context_len
+        s_index = torch.argmax(s_prob, dim=1)
+        e_index = torch.argmax(e_prob, dim=1)
+        # max_idx = torch.argmax(probs, dim=1)
+        # s_index = max_idx // context_len
+        # e_index = max_idx % context_len
 
         if self.use_generator:
             # ctx_span, ctx_span_len = self.getTopKSpans(final_context, probs, 2)
@@ -272,9 +274,12 @@ class MnemicReader(nn.Module):
 
         context_len = final_context.shape[1]
         
-        max_idx = torch.argmax(probs, dim=1)
-        s_index = max_idx // context_len
-        e_index = max_idx % context_len
+        s_index = torch.argmax(s_prob, dim=1)
+        e_index = torch.argmax(e_prob, dim=1)
+        
+        # max_idx = torch.argmax(probs, dim=1)
+        # s_index = max_idx // context_len
+        # e_index = max_idx % context_len
 
         if self.use_generator:
             ctx_span, ctx_span_len = self.extractSpan(final_context, s_index, e_index)

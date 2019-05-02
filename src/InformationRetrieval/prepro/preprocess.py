@@ -18,11 +18,12 @@ def convert_data(datafile, w2i={}, pos2i={}, update_dict=True, all_sents=False):
 
 	np.random.seed(0)
 	cids = list(data.keys())
-	np.random.shuffle(cids)
+	# np.random.shuffle(cids)
 	for cid in cids:
 		context = data[cid]['full_text']
+		passage_context = [sent for para in context for sent in para]
 		questions = data[cid]['qaps']
-		np.random.shuffle(questions)
+		# np.random.shuffle(questions)
 		for q in questions:
 			qwords = q['question_tokens']
 			qpos = q['question_pos']
@@ -48,15 +49,12 @@ def convert_data(datafile, w2i={}, pos2i={}, update_dict=True, all_sents=False):
 
 			passage_idxs = []
 			passage_scores = []
-			passage_context = []
 
 			if all_sents:				
 				for para_i in range(len(context)):
 					para = context[para_i]
 					for sent_i in range(len(para)):
-						sent = para[sent_i]
-						passage_context.append(sent)
-
+						sent = para[sent_i]						
 						words = sent[1]
 						pos = sent[2]
 
@@ -185,10 +183,10 @@ def getIRPretrainData(data_gen, pos_thres=50, npairs=10, nques=-1):
 	return Qs, Ps, Ns, y
 
 if __name__ == '__main__':
-	gen = convert_data('/home/kaixinm/NN4NLP-Project/prepro/narrativeqa_dev_fulltext.pickle', all_sents=True)
+	gen = convert_data('/home/kaixinm/NN4NLP-Project/prepro/narrativeqa_dev_fulltext_redo.pickle', all_sents=True)
 	q, p, n, y = getIRPretrainData(gen, nques=50, npairs=900)
-	# print(q.shape, p.shape, n.shape, y.shape)	
-	# print(q[10])
-	# print(p[10])
-	# print(n[10])
-	# print(y[10])
+	print(q.shape, p.shape, n.shape, y.shape)	
+	print(q[10].shape)
+	print(p[10].shape)
+	print(n[10].shape)
+	print(y[10].shape)

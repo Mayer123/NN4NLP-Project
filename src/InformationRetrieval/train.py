@@ -9,6 +9,7 @@ import logging
 import pickle
 from InformationRetrieval.AttentionRM.modules import AttentionRM
 from InformationRetrieval.ConvKNRM.modules import ConvKNRM
+from InformationRetrieval.SimpleRM.modules import KNRM
 from InformationRetrieval.prepro.preprocess import *
 from utils.utils import reset_embeddings
 
@@ -98,7 +99,6 @@ def otherCollateFn(batch):
     A1 = []
     A2 = []
     Questions = []
-    Passages = []
     P = []
     Pscore = []
     assert len(batch) == 1
@@ -123,13 +123,11 @@ def otherCollateFn(batch):
     max_q_len = torch.max(qlens)
     max_s_len = torch.max(slens)
     Qtensor = torch.zeros(len(batch), max_q_len, 2).long()
-    Ptensor = torch.zeros(len(Passages), max_s_len, 2).long()
-    print(len(P[0]), Ptensor.shape)   
+    Ptensor = torch.zeros(len(Passages), max_s_len, 2).long()  
     for i in range(len(batch)):
         Qtensor[i, :qlens[i],:] = torch.tensor(Q[i])
         if i == 0:
             for j in range(len(P)):
-                print(len(P[j]), Ptensor.shape)
                 Ptensor[j,:slens[j],:] = torch.tensor(P[j])
     return Qtensor, Ptensor, qlens, slens, idset, Questions, Passages, Pscore, A1, A2
 
@@ -188,14 +186,14 @@ def train(args):
         pos2i = w2i.copy()
 
     logger.info('loading train data')    
-    train_data_gen = convert_data(args.train_file, w2i, pos2i, update_dict=(len(w2i) <= 2), all_sents=True)
+    train_data_gen = convert_data(args.train_file, w2i, pos2i, update_dict=False, all_sents=True)
     Q_train, P_train, N_train, y_train = getIRPretrainData(train_data_gen, nques=args.nques, npairs=args.npairs)
     train_ds = PairwiseDataset(Q_train, P_train, N_train, y_train)
     train_dl = D.DataLoader(train_ds, batch_size=args.train_batch_size, shuffle=True,
                             collate_fn=mCollateFn)    
 
     logger.info('loading dev data')
-    dev_data_gen = convert_data(args.dev_file, w2i, pos2i, update_dict=False)
+    dev_data_gen = convert_data(args.dev_file, w2i, pos2i, update_dict=False, all_sents=True)
     Q_dev, P_dev, N_dev, y_dev = getIRPretrainData(dev_data_gen, npairs=args.npairs, nques=args.nques)
     dev_ds = PairwiseDataset(Q_dev, P_dev, N_dev, y_dev)
     dev_dl = D.DataLoader(dev_ds, batch_size=args.dev_batch_size, shuffle=False,
@@ -212,16 +210,11 @@ def train(args):
         model = torch.load(args.load_model)        
     else:
         if args.model == 'AttentionRM':
-            # rmr = torch.load('rmr2.pt')
             model = AttentionRM(init_emb=embeddings, pos_vocab_size=len(pos2i))
-            # model = AttentionRM(emb_layer=rmr.word_embeddings[0], pos_emb_layer=rmr.pos_emb[0])
-            # model.interactive_aligner = rmr.aligningBlock.aligning_block.interactive_aligner
-            # model.self_aligner = rmr.aligningBlock.aligning_block.self_aligner
-            # model.evidence_collector = rmr.aligningBlock.aligning_block.evidence_collector
-            # model.summarizer = rmr.aligningBlock.answer_pointer.summarizer
-
         if args.model == 'ConvKNRM':
             model = ConvKNRM(init_emb=embeddings)
+        if args.model == 'KNRM':
+            model = KNRM(init_emb=embeddings)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
@@ -242,34 +235,35 @@ def train(args):
     Dev_Loss = []
     Dev_metric = []
     for ITER in range(args.epochs):
-        train_loss = 0.0
-        model.train()
-        with tqdm.tqdm(train_dl) as t:
-            for batch in t:
-                global_step += 1
-                q, p, n, y, qlen, plen, nlen = batch
-                if use_cuda:
-                    q = q.cuda()
-                    p = p.cuda()
-                    n = n.cuda()
-                    y = y.cuda()
-                    qlen = qlen.cuda()
-                    plen = plen.cuda()
-                    nlen = nlen.cuda()
-                o1 = model(q, p, qlen, plen)
-                o2 = model(q, n, qlen, nlen)
-                loss = criterion(o1, o2, y)
-                kt = kendallTau(o1, o2)
-                
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+        if not args.dev_only:
+            train_loss = 0.0
+            model.train()
+            with tqdm.tqdm(train_dl) as t:
+                for batch in t:
+                    global_step += 1
+                    q, p, n, y, qlen, plen, nlen = batch
+                    if use_cuda:
+                        q = q.cuda()
+                        p = p.cuda()
+                        n = n.cuda()
+                        y = y.cuda()
+                        qlen = qlen.cuda()
+                        plen = plen.cuda()
+                        nlen = nlen.cuda()
+                    o1 = model(q, p, qlen, plen)
+                    o2 = model(q, n, qlen, nlen)
+                    loss = criterion(o1, o2, y)
+                    kt = kendallTau(o1, o2)
+                    
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
 
-                model.emb.weight.data[trained_idx] = fixed_embeddings
-                Train_Loss.append(float(loss))
-                Train_metric.append(float(kt))
+                    # model.emb.weight.data[trained_idx] = fixed_embeddings
+                    Train_Loss.append(float(loss))
+                    Train_metric.append(float(kt))
 
-                t.set_postfix(loss=float(np.mean(Train_Loss)), kt=np.mean(Train_metric))
+                    t.set_postfix(loss=float(np.mean(Train_Loss)), kt=np.mean(Train_metric))
         model = model.eval()
         with torch.no_grad():
             for batch in dev_dl:
@@ -284,9 +278,13 @@ def train(args):
                     nlen = nlen.cuda()
                 o1 = model(q, p, qlen, plen)
                 o2 = model(q, n, qlen, nlen)
-                # print(o1)
-                # print(o2)
-                # print(y)
+                # o1 = model.forward_singleContext(q, p, qlen, plen)
+                # o2 = model.forward_singleContext(q, n, qlen, nlen)
+                # print('o1', o1)
+                # print('o2', o2)
+                # print('y', y)
+                # print(o1 > o2)
+                # print(torch.sum((o1 > o2).long(), dim=0))
                 # return
                 loss = criterion(o1, o2, y)
                 kt = kendallTau(o1, o2)
@@ -345,21 +343,21 @@ def score_sentences(args):
     # train = FulltextDataset(train, args.train_batch_size)
     # train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=1, num_workers=4, collate_fn=otherCollateFn)
 
-    dev = convert_data(args.dev_file, w2i, pos2i, update_dict=False)
+    dev = convert_data(args.dev_file, w2i, pos2i, update_dict=False, all_sents=True)
     dev = FulltextDataset(dev, args.dev_batch_size)    
     dev_loader = torch.utils.data.DataLoader(dev, batch_size=1, num_workers=4, collate_fn=otherCollateFn)
 
-    logger.info('Generating embeddings')
-    embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
-    embeddings = torch.from_numpy(embeddings).float()
-    fixed_embeddings = embeddings[trained_idx]
+    # logger.info('Generating embeddings')
+    # embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
+    # embeddings = torch.from_numpy(embeddings).float()
+    # fixed_embeddings = embeddings[trained_idx]
 
     use_cuda = torch.cuda.is_available()
     model = torch.load(args.load_model) 
     if use_cuda:
         torch.cuda.manual_seed(args.seed)
         model = model.cuda()
-        fixed_embeddings = fixed_embeddings.cuda()  
+        # fixed_embeddings = fixed_embeddings.cuda()  
 
     model = model.eval()
     retrived_train = []
@@ -373,18 +371,18 @@ def score_sentences(args):
                 qlen = qlen.cuda()
                 plen = plen.cuda()
             pred_score = model.forward_singleContext(q, p, qlen, plen, batch_size=1024)
-            _, topk_idx = torch.topk(pred_score, min(50, plen.shape[0]), dim=1, sorted=False)     
+            top_scores, topk_idx = torch.topk(pred_score, min(50, plen.shape[0]), dim=1, sorted=False)            
             topk_idx = topk_idx.data
             for i in range(len(ques)):
                 selected_context = []
                 selected_scores = []
-                print (i, topk_idx[i,:], ids[i])
+                selected_new_scores = []
+                # print (i, topk_idx[i,:], ids[i])
                 for selected_idx in topk_idx[i,:]:
-                    print (cons[selected_idx])
                     selected_context.append(cons[selected_idx])
-                    selected_scores.append(scores[i][selected_idx])
-                retrived_dev.append({'id':ids[i], 'qaps':ques[i], 'context':selected_context, 'scores':selected_scores})
-            exit(0)
+                    selected_scores.append(scores[i][selected_idx])                    
+                retrived_dev.append({'id':ids[i], 'qaps':ques[i], 'context':selected_context, 'scores':selected_scores, 'new_scores':top_scores.cpu().tolist()})
+            break
     print (len(retrived_dev))
     with open('retrived_dev.pickle', 'wb') as f:
         pickle.dump(retrived_dev, f)
@@ -410,6 +408,7 @@ if __name__ == '__main__':
     parser.add_argument('--pos_dict', type=str, default="", help='path to the log file')
     parser.add_argument('--model', type=str, default="AttentionRM", help='path to the log file')
     parser.add_argument('--mode', type=str, default="train", help='mode to run')
+    parser.add_argument('--dev_only', action='store_true')
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
