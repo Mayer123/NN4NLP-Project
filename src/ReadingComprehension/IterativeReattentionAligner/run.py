@@ -14,11 +14,12 @@ import logging
 from ReadingComprehension.IterativeReattentionAligner.CSMrouge import RRRouge
 from ReadingComprehension.IterativeReattentionAligner.bleu import Bleu
 from ReadingComprehension.IterativeReattentionAligner.encoder import MnemicReader
-from EndToEndModel.answer_generator import AnswerGenerator
+# from EndToEndModel.answer_generator import AnswerGenerator
 from ReadingComprehension.IterativeReattentionAligner.e2e_encoder import MnemicReader as e2e_MnemicReader
 import cProfile, pstats, io
 from ReadingComprehension.IterativeReattentionAligner.data_utils import *
 from InformationRetrieval.AttentionRM.modules import AttentionRM
+from InformationRetrieval.SimpleRM.modules import KNRM
 from EndToEndModel.modules import EndToEndModel
 from nltk.translate.bleu_score import sentence_bleu
 import re
@@ -26,6 +27,7 @@ import pickle
 
 stoplist = set(['.',',', '...', '..'])
 bleu_obj = Bleu(4)
+NUM_WORKERS = 0
 
 def add_arguments(parser):
     parser.add_argument("train_file", help="File that contains training data")
@@ -34,12 +36,12 @@ def add_arguments(parser):
     parser.add_argument('--dicts_dir', type=str, default=None, help='Directory containing the word dictionaries')
     parser.add_argument('--seed', type=int, default=6, help='Random seed for the experiment')
     parser.add_argument('--epochs', type=int, default=20, help='Train data iterations')
-    parser.add_argument('--train_batch_size', type=int, default=24, help='Batch size for training')
-    parser.add_argument('--dev_batch_size', type=int, default=24, help='Batch size for dev')
+    parser.add_argument('--train_batch_size', type=int, default=16, help='Batch size for training')
+    parser.add_argument('--dev_batch_size', type=int, default=16, help='Batch size for dev')
     parser.add_argument('--hidden_size', type=int, default=100, help='Hidden size for LSTM')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of layers for LSTM')
     parser.add_argument('--char_emb_size', type=int, default=50, help='Embedding size for characters')
-    parser.add_argument('--pos_emb_size', type=int, default=50, help='Embedding size for pos tags')
+    parser.add_argument('--pos_emb_size', type=int, default=20, help='Embedding size for pos tags')
     parser.add_argument('--ner_emb_size', type=int, default=50, help='Embedding size for ner')
     parser.add_argument('--emb_dropout', type=float, default=0.3, help='Dropout rate for embedding layers')
     parser.add_argument('--rnn_dropout', type=float, default=0.3, help='Dropout rate for RNN layers')
@@ -50,6 +52,9 @@ def add_arguments(parser):
     parser.add_argument('--RL_loss_after', type=int, default=5, help='activate RL loss after how many epochs')
     parser.add_argument('--mode', type=str, default='summary', help='mode of training') 
     parser.add_argument('--min_occur', type=str, default=100, help='minimum occurance of a word to be counted in common vocab')  
+    parser.add_argument('--load_ir_model', type=str, default='', help='mode of training') 
+    parser.add_argument('--eval_only', action='store_true', help='whether to store the results')
+    parser.add_argument('--use_ir2', action='store_true', help='whether to store the results')
 
 def compute_scores(rouge, rrrouge, start, end, context, a1, a2, show=False):
     rouge_score = 0.0
@@ -74,6 +79,7 @@ def compute_scores(rouge, rrrouge, start, end, context, a1, a2, show=False):
         #score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
         #return score
         #print ("Sample output " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
+        # print('pred_span:', predicted_span, start[i], end[i], context[i])
         rouge_score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
         bleu1 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(1, 0, 0, 0))
         bleu4 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(0.25, 0.25, 0.25, 0.25))
@@ -89,6 +95,7 @@ def generate_answer(indices, id2words):
     skip = [0, 1, 2]
     # print (indices)
     for idx in indices:
+        idx = int(idx)
         if idx in skip:
             continue
         if idx == 3:
@@ -112,6 +119,8 @@ def generate_scores(rouge, generate_output, id2words, a1, a2, show=False):
 
 def train_full(args):
     global logger
+    rouge = Rouge()
+    rrrouge = RRRouge()
     logger = logging.getLogger()
     fh = logging.FileHandler(args.log_file)
     fh.setLevel(logging.INFO)
@@ -126,32 +135,51 @@ def train_full(args):
     with open(args.dev_file, 'rb') as f:
         dev_data = pickle.load(f)
     w2i, tag2i, ner2i, c2i, common_vocab = build_fulltext_dicts(training_data, args.min_occur)
-    
+    id2words = {}
+    for k, v in common_vocab.items():
+        id2words[v] = k
+
     w2i['<pad>'] = 0
     w2i['<unk>'] = 1
     tag2i['<pad>'] = 0 
     tag2i['<unk>'] = 1
+    ner2i['<pad>'] = 0 
+    ner2i['<unk>'] = 1
+    c2i['<pad>'] = 0 
+    c2i['<unk>'] = 1
+
     logger.info('Converting to index')
     train = convert_fulltext(training_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=100, build_chunks=True)
     dev = convert_fulltext(dev_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=100, build_chunks=True)
     train = FulltextDataset(train, args.train_batch_size)
     dev = FulltextDataset(dev, args.dev_batch_size)
-    train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=1, num_workers=4, collate_fn=mCollateFn)
-    dev_loader = torch.utils.data.DataLoader(dev, batch_size=1, num_workers=4, collate_fn=mCollateFn)
+    train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=1, num_workers = NUM_WORKERS, collate_fn=mCollateFn)
+    dev_loader = torch.utils.data.DataLoader(dev, batch_size=1, num_workers = NUM_WORKERS, collate_fn=mCollateFn, shuffle=False)
     logger.info('Generating embeddings')
     embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
     embeddings = torch.from_numpy(embeddings).float()
     fixed_embeddings = embeddings[trained_idx]
 
-    input_size = embeddings.shape[1] + args.pos_emb_size
+    input_size = embeddings.shape[1] + args.char_emb_size * 2 + args.pos_emb_size + args.ner_emb_size
     #use_cuda = False
     use_cuda = torch.cuda.is_available()
-    rc_model = e2e_MnemicReader(input_size, args.hidden_size, args.num_layers,
-                            args.pos_emb_size, embeddings, len(tag2i)+2, len(w2i)+4,
+    rc_model = e2e_MnemicReader(input_size, args.hidden_size, args.num_layers, 
+                            args.char_emb_size, args.pos_emb_size, args.ner_emb_size, 
+                            embeddings, len(c2i)+2, len(tag2i)+2, len(ner2i)+2, len(common_vocab)+4,
                             args.emb_dropout, args.rnn_dropout)
-    ir_model = AttentionRM(rc_model.word_embeddings, rc_model.pos_emb, pos_vocab_size=len(tag2i))
-    ag_model = AnswerGenerator(input_size, args.hidden_size, args.num_layers, rc_model.word_embeddings, embeddings.shape[1], len(common_vocab)+4, embeddings.shape[0], args.emb_dropout, args.rnn_dropout)
-    model = EndToEndModel(ir_model, rc_model, ag_model)
+    # rc_model = e2e_MnemicReader(input_size, args.hidden_size, args.num_layers,
+    #                         args.pos_emb_size, embeddings, len(tag2i)+2, len(w2i)+4,
+    #                         args.emb_dropout, args.rnn_dropout)
+    # ir_model = AttentionRM(rc_model.word_embeddings, rc_model.pos_emb, pos_vocab_size=len(tag2i))
+    if args.load_ir_model == '':
+        ir_model = KNRM(init_emb=embeddings)
+    else:
+        ir_model = torch.load(args.load_ir_model)
+
+    ag_model = None # AnswerGenerator(input_size, args.hidden_size, args.num_layers, rc_model.word_embeddings, embeddings.shape[1], len(common_vocab)+4, embeddings.shape[0], args.emb_dropout, args.rnn_dropout)
+    model = EndToEndModel(ir_model, 
+                            AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i)), 
+                            rc_model, ag_model, w2i, c2i, use_ir2=args.use_ir2)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
@@ -164,6 +192,7 @@ def train_full(args):
         model = model.cuda()
         fixed_embeddings = fixed_embeddings.cuda()
 
+
     logger.info('Start training')
     logger.info('-' * 100)
     global_step = 0
@@ -171,54 +200,70 @@ def train_full(args):
     pr = cProfile.Profile()
     for ITER in range(args.epochs):
         train_loss = 0.0
+        total_rc_loss = 0.0
+        total_ir1_loss = 0.0
+        total_ir2_loss = 0.0
         start_time = time.time()
-        model.train()
-        if ITER >= args.RL_loss_after:
-            model.use_RLLoss = True
-        # pr.enable()
-        for batch in tqdm.tqdm(train_loader):
-            global_step += 1
-            #print (global_step)
-            q, passage, avec1, avec2, qlens, slens, alens, a1, a2, p_words = batch
-            # print(q.dtype, passage.dtype, a.dtype, qlens.dtype, slens.dtype, alens.dtype)
-            # if global_step == 20:
-            #     pr.disable()
-            #     s = io.StringIO()
-            #     ps = pstats.Stats(pr, stream=s).sort_stats('tottime')
-            #     ps.print_stats(10)
-            #     print(s.getvalue())
-            #     return
-            #q, passage, a, qlens, slens, alens, a1, a2 = batch
-            if use_cuda:
-                q = q.cuda()
-                passage = passage.cuda()
-                avec1 = avec1.cuda()
-                avec2 = avec2.cuda()
-                qlens = qlens.cuda()
-                slens = slens.cuda()
-                alens = alens.cuda()
-            
-            batch_loss = model(q, passage, avec1, avec2, qlens, slens, alens, p_words)
-            optimizer.zero_grad()
-            batch_loss.backward()
 
-            train_loss += float(batch_loss)
-            #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
-            optimizer.step()
+        if not args.eval_only:
+            model.train()
+            if ITER >= args.RL_loss_after:
+                model.use_RLLoss = True
+            # pr.enable()
+            t = tqdm.tqdm(train_loader)
+            local_step = 0
+            for batch in t:
+                global_step += 1
+                local_step  += 1
+                #print (global_step)
+                q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, qlens, slens, alens, a1, a2, p_words = batch                
+                # print(q.dtype, passage.dtype, a.dtype, qlens.dtype, slens.dtype, alens.dtype)
+                # if global_step == 20:
+                #     pr.disable()
+                #     s = io.StringIO()
+                #     ps = pstats.Stats(pr, stream=s).sort_stats('tottime')
+                #     ps.print_stats(10)
+                #     print(s.getvalue())
+                #     return
+                #q, passage, a, qlens, slens, alens, a1, a2 = batch
+                if use_cuda:
+                    q = q.cuda()
+                    q_chars = q_chars.cuda()
+                    passage = passage.cuda()
+                    passage_chars = passage_chars.cuda()
+                    # avec1 = avec1.cuda()
+                    # avec2 = avec2.cuda()
+                    qlens = qlens.cuda()
+                    slens = slens.cuda()
+                    alens = alens.cuda()
 
-            reset_embeddings(rc_model.word_embeddings, embeddings, trained_idx)
-            if global_step % 100 == 0:
-                logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
-            #rc_model.word_embeddings[0].weight.data[trained_idx] = fixed_embeddings
-            # pr.disable()
-            # s = io.StringIO()
-            # ps = pstats.Stats(pr, stream=s).sort_stats('tottime')
-            # ps.print_stats(10)
-            # print(s.getvalue())
-            # return
-            # if global_step % 100 == 0:
-            #     logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
-        logger.info("iter %r global_step %s : train loss/batch=%.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), time.time() - start_time))
+                rc_loss, ir1_loss, ir2_loss, sidx, eidx = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
+                                                qlens, slens, alens, p_words, a1, a2)
+                batch_loss = rc_loss+ir1_loss+ir2_loss                
+                optimizer.zero_grad()
+                batch_loss.backward()
+
+                train_loss += float(batch_loss)
+                total_rc_loss += float(rc_loss)
+                total_ir1_loss += float(ir1_loss)
+                total_ir2_loss += float(ir2_loss)
+                #torch.nn.utils.clip_grad_norm_(model.parameters(),1)
+                optimizer.step()
+
+                reset_embeddings(rc_model.word_embeddings, embeddings, trained_idx)  
+                t.set_postfix(loss=train_loss/local_step, rc_loss=total_rc_loss/local_step, 
+                                ir1_loss=total_ir1_loss/local_step, ir2_loss=total_ir2_loss/local_step)          
+                # break
+                #rc_model.word_embeddings[0].weight.data[trained_idx] = fixed_embeddings
+                # pr.disable()
+                # s = io.StringIO()
+                # ps = pstats.Stats(pr, stream=s).sort_stats('tottime')
+                # ps.print_stats(10)
+                # print(s.getvalue())
+                # return
+                # if global_step % 100 == 0:
+                #     logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
+            logger.info("iter %r global_step %s : train loss/batch=%.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), time.time() - start_time))
         model.eval()
         with torch.no_grad():
             rouge_scores = 0.0
@@ -226,25 +271,33 @@ def train_full(args):
             bleu4_scores = 0.0
             another_rouge = 0.0
             dev_loss = 0.0
+            gen_rouge = 0.
+            count = 0
             for batch in dev_loader:
-                q, passage, avec1, avec2, qlens, slens, alens, a1, a2, p_words = batch
+
+                q, q_chars, passage, passage_chars, _, avec1, avec2, qlens, slens, alens, a1, a2, p_words = batch
+                count += q.shape[0]
                 if use_cuda:
                     q = q.cuda()
+                    q_chars = q_chars.cuda()
                     passage = passage.cuda()
+                    passage_chars = passage_chars.cuda()
                     qlens = qlens.cuda()
                     slens = slens.cuda()
-                batch_loss, generate_output = model.evaluate(q, passage, qlens, slens, p_words)
-                dev_loss += batch_loss.cpu().item()
-                batch_score = compute_scores(rouge, rrrouge, generate_output, a1, a2)
-                #gen_rouge += generate_scores(rouge, generate_output.tolist(), id2words, a1, a2)
+                sidx, eidx, context = model.evaluate(q, q_chars, passage, passage_chars, qlens, slens, p_words)
+                # dev_loss += 0# batch_loss.cpu().item()
+                # print(context)
+
+                batch_score = compute_scores(rouge, rrrouge, sidx, eidx, context, a1, a2)
+                # gen_rouge += generate_scores(rouge, generate_output.cpu().numpy(), id2words, a1, a2)
                 rouge_scores += batch_score[0]
                 bleu1_scores += batch_score[1]
                 bleu4_scores += batch_score[2]
                 another_rouge += batch_score[3]
-            avg_rouge = rouge_scores / len(dev)
-            avg_bleu1 = bleu1_scores / len(dev)
-            avg_bleu4 = bleu4_scores / len(dev)
-            another_rouge_avg = another_rouge / len(dev)
+            avg_rouge = rouge_scores / count
+            avg_bleu1 = bleu1_scores / count
+            avg_bleu4 = bleu4_scores / count
+            another_rouge_avg = another_rouge / count
             logger.info("iter %r: dev loss %.4f dev average rouge score %.4f, another rouge %.4f, bleu1 score %.4f, bleu4 score %.4f, time=%.2fs" % (ITER, dev_loss/len(dev_loader), avg_rouge, another_rouge_avg, avg_bleu1, avg_bleu4, time.time() - start_time))
             scheduler.step(avg_rouge)
             if avg_rouge > best:
@@ -297,14 +350,15 @@ def main(args):
     id2words = {}
     for k, v in common_vocab.items():
         id2words[v] = k
+
     train = TextDataset(list(train))
     dev = TextDataset(list(dev))
     print (len(train))
     print (len(dev))
     logger.info('Generating embeddings')
     embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
-    train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=args.train_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
-    dev_loader = torch.utils.data.DataLoader(dev, batch_size=args.dev_batch_size, num_workers=4, collate_fn=lambda batch : zip(*batch))
+    train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=args.train_batch_size, num_workers = NUM_WORKERS, collate_fn=lambda batch : zip(*batch))
+    dev_loader = torch.utils.data.DataLoader(dev, batch_size=args.dev_batch_size, num_workers = NUM_WORKERS, collate_fn=lambda batch : zip(*batch))
     #print (embeddings.shape)
     use_cuda = torch.cuda.is_available()
     #use_cuda = False
@@ -317,7 +371,7 @@ def main(args):
     else:
         model = torch.load(args.load_model)
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
                                                            factor=0.5, patience=0,
                                                            verbose=True)
@@ -377,6 +431,7 @@ def main(args):
             train_loss += batch_loss.cpu().item()
             train_CE_loss += CE_loss.cpu().item()
             #tmp = generate_scores(rouge, gen_out.tolist(), id2words, a1, a2)
+
             batch_score = compute_scores(rouge, rrrouge, s_index.tolist(), e_index.tolist(), c, a1, a2)
             train_rouge_score += batch_score[0]
             optimizer.zero_grad()

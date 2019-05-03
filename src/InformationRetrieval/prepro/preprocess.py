@@ -8,7 +8,7 @@ from sklearn.preprocessing import StandardScaler
 import itertools
 import tqdm
 
-def build_dict(datafile, w2i={}, pos2i={}, update_dict=True):	
+def convert_data(datafile, w2i={}, pos2i={}, update_dict=True, all_sents=False):	
 	if datafile.split('.')[-1] == 'json':
 		with open(datafile) as f:
 			data = json.load(f)
@@ -16,9 +16,16 @@ def build_dict(datafile, w2i={}, pos2i={}, update_dict=True):
 		with open(datafile, 'rb') as f:
 			data = pickle.load(f)
 	context_cache = {}
-	for cid in tqdm.tqdm(data):
+
+	np.random.seed(0)
+	cids = list(data.keys())
+	# np.random.shuffle(cids)
+	for cid in cids:
 		context = data[cid]['full_text']
-		for q in data[cid]['qaps']:
+		passage_context = [sent for para in context for sent in para]
+		questions = data[cid]['qaps']
+		# np.random.shuffle(questions)
+		for q in questions:
 			qwords = q['question_tokens']
 			qpos = q['question_pos']
 			awords = [q['answer1_tokens'],
@@ -35,141 +42,48 @@ def build_dict(datafile, w2i={}, pos2i={}, update_dict=True):
 				a1idx = [w2i.get(w, w2i['<unk>']) for w in awords[0]]
 				a2idx = [w2i.get(w, w2i['<unk>']) for w in awords[1]]		
 			qidx = np.stack((qidx, qposidx), axis=1)
-			if cid in context_cache:
-				(passage_idxs, passage_context) = context_cache[cid]
-			else:
-				passage_idxs = []
-				passage_context = []
-				for i, para in enumerate(context):
-					for j,sent in enumerate(para):
-						passage_context.append(sent)
-						words = sent[1]
-						pos = sent[2]
-						if update_dict:
-							widx = [w2i.setdefault(w, len(w2i)) for w in words]
-							posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
-						else:
-							widx = [w2i.get(w, w2i['<unk>']) for w in words]
-							posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
-						# if len(widx) > max_len:
-						# 	widx = widx[:max_len]
-						# 	posidx = posidx[:max_len]
-						passage_idxs.append(np.stack((widx, posidx), axis=1))
-				context_cache[cid] = (passage_idxs, passage_context)		
-			# passages = q["full_text_scores"]
-			# passage_idxs = []
-			# passage_scores = []
-			# passage_context = []
-			# for (paraI, sentI, score) in passages:
-			# 	passage_scores.append(score)
-			# 	words = context[paraI][sentI][1]
-			# 	pos = context[paraI][sentI][2]
-			# 	passage_context.append(context[paraI][sentI])
-			# 	if update_dict:
-			# 		widx = [w2i.setdefault(w, len(w2i)) for w in words]
-			# 		posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
-			# 	else:
-			# 		widx = [w2i.get(w, w2i['<unk>']) for w in words]
-			# 		posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
-			# 	passage_idxs.append(np.stack((widx, posidx), axis=1))
 			
-	return w2i, pos2i
+			passages = q["full_text_scores"]
+			non_zero_rouge_sents = {}
+			for (paraI, sentI, score) in passages:				
+				non_zero_rouge_sents[(paraI, sentI)] = score
 
-def convert_data(datafile, w2i={}, pos2i={}, update_dict=True, max_len=200):	
-	if datafile.split('.')[-1] == 'json':
-		with open(datafile) as f:
-			data = json.load(f)
-	if datafile.split('.')[-1] == 'pickle':
-		with open(datafile, 'rb') as f:
-			data = pickle.load(f)
-	context_cache = {}
-	for cid in tqdm.tqdm(data):
-		context = data[cid]['full_text']
-		for q in data[cid]['qaps']:
-			qwords = q['question_tokens']
-			qpos = q['question_pos']
-			awords = [q['answer1_tokens'],
-					  q['answer2_tokens']]
+			passage_idxs = []
+			passage_scores = []
 
-			if update_dict:
-				qidx = [w2i.setdefault(w, len(w2i)) for w in qwords]
-				qposidx = [pos2i.setdefault(p, len(pos2i)) for p in qpos]
-				a1idx = [w2i.setdefault(w, len(w2i)) for w in awords[0]]
-				a2idx = [w2i.setdefault(w, len(w2i)) for w in awords[1]]
-			else:
-				qidx = [w2i.get(w, w2i['<unk>']) for w in qwords]
-				qposidx = [pos2i.get(p, pos2i['<unk>']) for p in qpos]
-				a1idx = [w2i.get(w, w2i['<unk>']) for w in awords[0]]
-				a2idx = [w2i.get(w, w2i['<unk>']) for w in awords[1]]		
-			qidx = np.stack((qidx, qposidx), axis=1)
-			# if q['_id'] in context_cache:
-			# 	context = context_cache[q['_id']]
-			# else:
-			# 	context = os.path.join(docdir, "%s.%s" % (q['_id'], docext))
-			# 	if not os.path.exists(context):
-			# 		continue				
-			# 	with open(context) as f:
-			# 		context = json.load(f)
-			# 	context_cache[q['_id']] = context
-			if cid in context_cache:
-				(passage_idxs, passage_context) = context_cache[cid]
-			else:
-				passage_idxs = []
-				passage_context = []
-				for i, para in enumerate(context):
-					for j,sent in enumerate(para):
-						passage_context.append(sent)
+			if all_sents:				
+				for para_i in range(len(context)):
+					para = context[para_i]
+					for sent_i in range(len(para)):
+						sent = para[sent_i]						
 						words = sent[1]
 						pos = sent[2]
+
 						if update_dict:
 							widx = [w2i.setdefault(w, len(w2i)) for w in words]
 							posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
 						else:
 							widx = [w2i.get(w, w2i['<unk>']) for w in words]
 							posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
-						if len(widx) > max_len:
-							widx = widx[:max_len]
-							posidx = posidx[:max_len]
+						
 						passage_idxs.append(np.stack((widx, posidx), axis=1))
-				context_cache[cid] = (passage_idxs, passage_context)		
-				# for (paraI, sentI, score) in passages:
-				# 	passage_scores.append(score)
-				# 	words = context[paraI][sentI][1]
-				# 	pos = context[paraI][sentI][2]
-				# 	if update_dict:
-				# 		widx = [w2i.setdefault(w, len(w2i)) for w in words]
-				# 		posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
-				# 	else:
-				# 		widx = [w2i.get(w, w2i['<unk>']) for w in words]
-				# 		posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
-				# 	passage_idxs.append(np.stack((widx, posidx), axis=1))
-				
-			passage_scores = []
-			score_dict = {}
-			for (paraI, sentI, score) in q["full_text_scores"]:
-				score_dict[(paraI, sentI)] = score
-			for i, para in enumerate(context):
-				for j,sent in enumerate(para):
-					if (i, j) in score_dict:
-						passage_scores.append(score_dict[(i, j)])
+
+						if (para_i, sent_i) in non_zero_rouge_sents:
+							passage_scores.append(non_zero_rouge_sents[(para_i, sent_i)])
+						else:
+							passage_scores.append(0.0)
+			else:
+				for (paraI, sentI, score) in passages:
+					passage_scores.append(score)
+					words = context[paraI][sentI][1]
+					pos = context[paraI][sentI][2]
+					if update_dict:
+						widx = [w2i.setdefault(w, len(w2i)) for w in words]
+						posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
 					else:
-						passage_scores.append(0.0)
-			# passages = q["full_text_scores"]
-			# passage_idxs = []
-			# passage_scores = []
-			# passage_context = []
-			# for (paraI, sentI, score) in passages:
-			# 	passage_scores.append(score)
-			# 	words = context[paraI][sentI][1]
-			# 	pos = context[paraI][sentI][2]
-			# 	passage_context.append(context[paraI][sentI])
-			# 	if update_dict:
-			# 		widx = [w2i.setdefault(w, len(w2i)) for w in words]
-			# 		posidx = [pos2i.setdefault(p, len(pos2i)) for p in pos]
-			# 	else:
-			# 		widx = [w2i.get(w, w2i['<unk>']) for w in words]
-			# 		posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
-			# 	passage_idxs.append(np.stack((widx, posidx), axis=1))
+						widx = [w2i.get(w, w2i['<unk>']) for w in words]
+						posidx = [pos2i.get(p, pos2i['<unk>']) for p in pos]
+					passage_idxs.append(np.stack((widx, posidx), axis=1))
 			qo = {}
 			for k, v in q.items():
 				if k == 'full_text_scores':
@@ -178,7 +92,22 @@ def convert_data(datafile, w2i={}, pos2i={}, update_dict=True, max_len=200):
 			if len(passage_idxs) > 0:
 				yield(cid, qo, passage_context, qidx, a1idx, a2idx, passage_idxs, passage_scores)
 
-def getIRPretrainData(data_gen):
+def getEvalData(data_gen):
+	Qs = []
+	Cs = []
+	y = []
+
+	for _, _, _, qidx, _, _, didxs, dscores in data_gen:
+		Qs.append(qidx)
+		Cs.append(didxs)
+		y.append(dscores)
+	Qs = np.array(Qs)
+	Cs = np.array(Cs)
+	y = np.array(y)
+
+	return Qs, Cs, y
+
+def getIRPretrainData(data_gen, pos_thres=50, npairs=10, nques=-1):
 	Qs = []
 	Ps = []
 	Ns = []
@@ -187,37 +116,53 @@ def getIRPretrainData(data_gen):
 	max_lens = [0,0,0]
 	count = 0
 	np.random.seed(0)
-	for qidx, _, _, didxs, dscores in data_gen:
+	for  _, _, _, qidx, _, _, didxs, dscores in data_gen:
 		count += 1
-		# if count == 1000:
-		# 	break
+		if count == nques:
+			break
 		sys.stdout.write("\r%d" % count)
 		sys.stdout.flush()	
 
-		dscores = np.array(dscores)	
+		# print('dscores range:', max(dscores), min(dscores))
+
+		dscores = np.array(dscores)
 		dscores = (dscores-np.min(dscores))
-		dscores /= (max(dscores) - min(dscores) + 1e-8)	
-			
+		dscores /= (max(dscores) - min(dscores) + 1e-8)				
+
 		score_sorted_idx = sorted(range(len(dscores)), 
 									key=lambda i: dscores[i],
-									reverse=True)		
-		# idxs = np.arange(len(dscores))
-		posIdx = score_sorted_idx[:100]
-		negIdx = score_sorted_idx[len(posIdx):]
+									reverse=True)
+
+		thresh = dscores[score_sorted_idx[len(score_sorted_idx) // 100]]
+		# print('thresh:', thresh)
+		
+		# posIdx = score_sorted_idx[:pos_thres]
+		# negIdx = score_sorted_idx[len(posIdx):]		
+		posIdx = np.arange(len(dscores))[dscores >= thresh]
+		negIdx = np.arange(len(dscores))[dscores < thresh]
+
+		# # pairs = zip(posIdx, negIdx)
+
+		if len(negIdx) == 0 or len(posIdx) == 0:
+			continue
+
+		# print(max(dscores[posIdx]), min(dscores[posIdx]))
+		# print(max(dscores[negIdx]), min(dscores[negIdx]))
 
 		np.random.shuffle(posIdx)
 		np.random.shuffle(negIdx)
 
-		# # pairs = zip(posIdx, negIdx)
+		k = int(round(np.sqrt(npairs)))
 
-		if len(negIdx) == 0:
-			continue
+		posIdx = posIdx[:k]
+		negIdx = negIdx[:k]		
 
 		# idxs = np.arange(len(dscores))
 		# np.random.shuffle(idxs)
 		pairs_gen = itertools.product(posIdx, negIdx)
+		pairs = list(pairs_gen)
 		# np.random.shuffle(pairs)
-		pairs = [next(pairs_gen) for i in range(min(len(posIdx) * len(negIdx), 200))]
+		# pairs = [next(pairs_gen) for i in range(min(len(posIdx) * len(negIdx), npairs))]
 
 		for pi, ni in pairs:			
 			Qs.append(np.array(qidx))
@@ -238,10 +183,10 @@ def getIRPretrainData(data_gen):
 	return Qs, Ps, Ns, y
 
 if __name__ == '__main__':
-	gen = convert_data('/home/kaixinm/NN4NLP-Project/prepro/narrativeqa_dev_fulltext.pickle')
-	q, p, n, y = getIRPretrainData(gen)
+	gen = convert_data('/home/kaixinm/NN4NLP-Project/prepro/narrativeqa_dev_fulltext_redo.pickle', all_sents=True)
+	q, p, n, y = getIRPretrainData(gen, nques=50, npairs=900)
 	print(q.shape, p.shape, n.shape, y.shape)	
-	print(q[500].shape)
-	print(p[500].shape)
-	print(n[500].shape)
-	print(y[500].shape)
+	print(q[10].shape)
+	print(p[10].shape)
+	print(n[10].shape)
+	print(y[10].shape)

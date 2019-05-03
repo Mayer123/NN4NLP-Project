@@ -20,7 +20,7 @@ def masked_softmax(E, mask, dim):
     E = E / torch.sum(E, dim=dim, keepdim=True)
     return E
 
-def getAligmentMatrix(v, u, mask=None, prev=None):
+def getAlignmentMatrix(v, u, mask=None, prev=None):
     E = torch.bmm(v,u.transpose(1,2))
     if prev is not None:
         E = E + prev
@@ -28,5 +28,5 @@ def getAligmentMatrix(v, u, mask=None, prev=None):
     return E
     
 def reset_embeddings(word_embeddings, fixed_embeddings, trained_idx):
-    word_embeddings.weight.data[trained_idx] = torch.FloatTensor(fixed_embeddings[trained_idx]).cuda()
+    word_embeddings.weight.data[trained_idx] = torch.FloatTensor(fixed_embeddings[trained_idx]).to(word_embeddings.weight.data.device)
     return 

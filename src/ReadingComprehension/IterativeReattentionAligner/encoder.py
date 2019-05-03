@@ -6,17 +6,13 @@ import numpy as np
 from ReadingComprehension.IterativeReattentionAligner.modules import IterativeAligner
 from ReadingComprehension.IterativeReattentionAligner.loss import DCRLLoss
 from ReadingComprehension.IterativeReattentionAligner.decoder import Decoder
-from ReadingComprehension.IterativeReattentionAligner.e2e_encoder import GaussianKernel
-from ReadingComprehension.IterativeReattentionAligner.e2e_encoder import WordOverlapLoss
-#from allennlp.modules.elmo import Elmo, batch_to_ids
-
-#options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
-#weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
+from AnswerGenerator.decoder import GRUDecoder, GRUEncoder, seq2seqAG
 
 class MnemicReader(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, char_emb_dim, 
                     pos_emb_dim, ner_emb_dim, word_embeddings, num_char, 
-                    num_pos, num_ner, vocab_size, emb_dropout=0.0, rnn_dropout=0.0):
+                    num_pos, num_ner, vocab_size, emb_dropout=0.0, rnn_dropout=0.0,
+                    use_generator=False):
         super(MnemicReader, self).__init__()
         self.num_layers = num_layers
         self.rnn = nn.ModuleList()            
@@ -61,9 +57,21 @@ class MnemicReader(nn.Module):
             self.rnn.append(lstm)
 
         self.use_RLLoss = False
-        self.generative_decoder = Decoder(hidden_size*2, hidden_size, self.word_embeddings, self.emb_size, self.vocab_size, self.full_vocab, 15, 0.4)
-        self.gen_loss = nn.NLLLoss(ignore_index=0)
-        #self.elmo = Elmo(options_file, weight_file, 2, dropout=0)
+
+        print(hidden_size)        
+        self.use_generator = use_generator
+        if self.use_generator:
+            # self.decoder = GRUDecoder(word_embeddings.shape[1], 2*hidden_size, 1, word_embeddings.shape[0], 
+            #                             word_embeddings=self.word_embeddings, use_attention=False)
+            encoder = GRUEncoder(2*word_embeddings.shape[1], 1024, 1, bidirectional=False)
+            decoder = GRUDecoder(word_embeddings.shape[1], 1024, 1, word_embeddings.shape[0], 
+                                        word_embeddings=self.word_embeddings, use_attention=True,
+                                        tf_rate=0.9)
+            self.answer_generator = seq2seqAG(encoder, decoder)
+
+            self.decoder_loss = nn.CrossEntropyLoss(ignore_index=0, reduction='sum')
+        # self.generative_decoder = Decoder(self.emb_size, hidden_size, self.word_embeddings, self.emb_size, self.vocab_size, 15, 0.4)
+        # self.gen_loss = nn.NLLLoss(ignore_index=0)
         # self.fc_in = nn.Linear(word_embeddings.shape[1], hidden_size*2)
         #self.word_loss = WordOverlapLoss()
 
@@ -153,12 +161,52 @@ class MnemicReader(nn.Module):
         enc_con = torch.cat(enc_con, 2).transpose(0, 1) # (batch_size, seq_len, enc_con_dim)
         enc_que = torch.cat(enc_que, 2).transpose(0, 1) # (batch_size, seq_len, enc_que_dim)            
         # print(enc_con.shape, enc_que.shape)
-        s_prob, e_prob, probs, final_context = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
+        s_prob, e_prob, probs, final_context, hidden_R = self.aligningBlock(enc_con, enc_que, c_mask.float(),  q_mask.float())
         
-        return s_prob, e_prob, probs, final_context
+        return s_prob, e_prob, probs, final_context, hidden_R
 
-    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, context, a1, a2, a_vec, alen):
-        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
+    def getDecoderLoss(self, pred_logits, a_vec):
+        a_vec = a_vec.contiguous().view(-1)
+        pred_logits = pred_logits.contiguous().view(-1, pred_logits.shape[2])        
+        decoder_loss = self.decoder_loss(pred_logits, a_vec)
+        return decoder_loss
+
+    def extractSpan(self, context, s_index, e_index):
+        ctx_span_len = e_index - s_index
+        ctx_span = [context[i, s_index[i]:e_index[i]] for i in range(context.shape[0])]        
+        ctx_span = nn.utils.rnn.pad_sequence(ctx_span, batch_first=True) 
+        return ctx_span, ctx_span_len
+
+    def getTopKSpans(self, context, probs, k):
+        context_len = context.shape[1]
+        _, top_spans = torch.topk(probs, 4, dim=1)
+        ctx_span = []
+        for i in range(top_spans.shape[0]):
+            si = top_spans[i] // context_len
+            ei = top_spans[i] % context_len
+            span = [context[i, si[j] : ei[j]].detach() for j in range(len(si))]
+            span = torch.cat(span, dim=0)
+            ctx_span.append(span)
+
+        ctx_span_len = torch.tensor([s.shape[0] for s in ctx_span]).long().to(context.device)
+        ctx_span = nn.utils.rnn.pad_sequence(ctx_span, batch_first=True)        
+        return ctx_span, ctx_span_len
+
+    def getPredsFromGenerator(self, hidden_R, ctx_span, ctx_span_len, a_vec):        
+        hidden_R = hidden_R.transpose(0,1)
+        hidden_R = hidden_R.contiguous().view(hidden_R.shape[0], -1)       
+
+        # pred_logits = self.decoder(ctx_span, ctx_span_len, a_vec, 2, 
+        #                             gumbel=True, initial_hidden=hidden_R)
+        pred_logits = self.answer_generator(ctx_span, ctx_span_len, a_vec, 2)
+        pred_logits = pred_logits.transpose(0,1)
+
+        _, pred_ans = torch.max(pred_logits, dim=2)        
+
+        return pred_logits, pred_ans
+
+    def forward(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, start, end, context, a1, a2, a_vec):        
+        s_prob, e_prob, probs, final_context, hidden_R = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
                                                                         c_em, c_char_lens, c_mask, q_vec, 
                                                                         q_pos, q_ner, q_char, q_em, 
                                                                         q_char_lens, q_mask)
@@ -178,12 +226,25 @@ class MnemicReader(nn.Module):
         loss2 = self.loss(torch.log(e_prob), end)
         loss = loss1 + loss2
 
-        context_len = s_prob.shape[1]
-        #loss = self.loss(probs, start*context_len + end)
+        context_len = final_context.shape[1]
         
-        max_idx = torch.argmax(probs, dim=1)
-        s_index = max_idx // context_len
-        e_index = max_idx % context_len
+        if not torch.isfinite(probs).all():
+            print('bad probs')
+            return
+
+        s_index = torch.argmax(s_prob, dim=1)
+        e_index = torch.argmax(e_prob, dim=1)
+        # max_idx = torch.argmax(probs, dim=1)
+        # s_index = max_idx // context_len
+        # e_index = max_idx % context_len
+
+        if self.use_generator:
+            # ctx_span, ctx_span_len = self.getTopKSpans(final_context, probs, 2)
+            ctx_span, ctx_span_len = self.extractSpan(final_context, s_index, e_index)
+            pred_logits, pred_ans = self.getPredsFromGenerator(hidden_R, ctx_span, ctx_span_len, a_vec.transpose(0,1))
+            decoder_loss = self.getDecoderLoss(pred_logits, a_vec)
+            loss += decoder_loss
+        pred_ans = None
 
         #pred_a = [c_vec[i, s_index[i]:e_index[i]] for i in range(len(s_index))]
         
@@ -213,28 +274,11 @@ class MnemicReader(nn.Module):
         # generate_output = (1-eps)*generate_output + eps*torch.min(generate_output[generate_output != 0])
         # loss = self.gen_loss(torch.log(generate_output), a_vec[:,1:].contiguous().view(-1))
         if not self.use_RLLoss:
-            return loss, loss, s_index, e_index
-
-        #return loss
-        #s_prob = torch.exp(s_prob)
-        #e_prob = torch.exp(e_prob)
-        # loss1 = self.loss(s_prob, start)
-        # loss2 = self.loss(e_prob, end)
-
-        #s_prob = torch.nn.functional.softmax(s_prob, dim=1)
-        #e_prob = torch.nn.functional.softmax(e_prob, dim=1)
-        
-        #s_prob = s_prob * c_mask.float()
-        #e_prob = e_prob * c_mask.float()
+            return loss, loss, s_index, e_index, pred_ans
 
         probs = torch.exp(probs)
         rl_loss = self.DCRL_loss(probs, s_prob, e_prob, context_len, start, end, context, a1, a2)
-        #_, s_index = torch.max(torch.squeeze(s_prob), dim=1)
-        #_, e_index = torch.max(torch.squeeze(e_prob), dim=1)
-        #print (loss1, loss2)
-        #loss = (start - s_index)**2 + (end - e_index)**2
-        #loss = (loss1+loss2)*self.weight_a.pow(-1)*self.half+rl_loss*self.weight_b.pow(-1)*self.half+torch.log(self.weight_a)+torch.log(self.weight_b)
-        #return loss
+
         self.weight_a = self.weight_a.to(rl_loss.device)
         self.weight_b = self.weight_b.to(rl_loss.device)
         self.half = self.half.to(rl_loss.device)
@@ -243,10 +287,11 @@ class MnemicReader(nn.Module):
         b1 = torch.log(torch.pow(self.weight_a, 2))
         b2 = torch.log(torch.pow(self.weight_b, 2))
         #total_loss = (loss1+loss2)*self.weight_a+rl_loss*self.weight_b
-        return loss * a1 + rl_loss * a2 + b1 + b2, loss, s_index, e_index
+        return loss * a1 + rl_loss * a2 + b1 + b2, loss, s_index, e_index, pred_ans
 
-    def evaluate(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask, context):
-        s_prob, e_prob, probs, final_context = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
+
+    def evaluate(self, c_vec, c_pos, c_ner, c_char, c_em, c_char_lens, c_mask, q_vec, q_pos, q_ner, q_char, q_em, q_char_lens, q_mask):
+        s_prob, e_prob, probs, final_context, hidden_R = self.getAnswerSpanProbs(c_vec, c_pos, c_ner, c_char, 
                                                                         c_em, c_char_lens, c_mask, q_vec, 
                                                                         q_pos, q_ner, q_char, q_em, 
                                                                         q_char_lens, q_mask)
@@ -254,17 +299,22 @@ class MnemicReader(nn.Module):
         s_prob = torch.squeeze(s_prob)
         e_prob = torch.squeeze(e_prob)
 
-        context_len = s_prob.shape[1]
-        max_idx = torch.argmax(probs, dim=1)
-        s_index = max_idx // context_len
-        e_index = max_idx % context_len
-        # decode_input = self.prepare_decoder_input(s_index, e_index, con_vec)
-        #character_ids = batch_to_ids(context).to(c_vec.device)
+        context_len = final_context.shape[1]
+        
+        s_index = torch.argmax(s_prob, dim=1)
+        e_index = torch.argmax(e_prob, dim=1)
+        
+        # max_idx = torch.argmax(probs, dim=1)
+        # s_index = max_idx // context_len
+        # e_index = max_idx % context_len
 
-        #elmo_embeddings = self.elmo(character_ids)
-        #final_context = torch.cat([final_context]+elmo_embeddings['elmo_representations'], dim=2)
-        #generate_output = self.generative_decoder.generate(final_context, c_mask, c_vec)
-        return s_index, e_index, torch.log(s_prob), torch.log(e_prob)
+        if self.use_generator:
+            ctx_span, ctx_span_len = self.extractSpan(final_context, s_index, e_index)
+            _, pred_ans = self.getPredsFromGenerator(hidden_R, ctx_span, ctx_span_len, None)
+        else:
+            pred_ans = None
+
+        return s_index, e_index, torch.log(s_prob), torch.log(e_prob), pred_ans
 
 if __name__ == '__main__':
     seq_len = 60
