@@ -14,7 +14,7 @@ import logging
 from ReadingComprehension.IterativeReattentionAligner.CSMrouge import RRRouge
 from ReadingComprehension.IterativeReattentionAligner.bleu import Bleu
 from ReadingComprehension.IterativeReattentionAligner.encoder import MnemicReader
-from EndToEndModel.answer_generator import AnswerGenerator
+# from EndToEndModel.answer_generator import AnswerGenerator
 from ReadingComprehension.IterativeReattentionAligner.e2e_encoder import MnemicReader as e2e_MnemicReader
 import cProfile, pstats, io
 from ReadingComprehension.IterativeReattentionAligner.utils import *
@@ -26,7 +26,7 @@ import pickle
 
 stoplist = set(['.',',', '...', '..'])
 bleu_obj = Bleu(4)
-NUM_WORKERS = 0
+NUM_WORKERS = 4
 
 def add_arguments(parser):
     parser.add_argument("train_file", help="File that contains training data")
@@ -52,13 +52,15 @@ def add_arguments(parser):
     parser.add_argument('--mode', type=str, default='summary', help='mode of training') 
     parser.add_argument('--min_occur', type=str, default=100, help='minimum occurance of a word to be counted in common vocab')  
 
-def compute_scores(rouge, rrrouge, start, end, context, a1, a2, show=False):
+def compute_scores(rouge, rrrouge, start, end, context, a1, a2, f, show=False):
     rouge_score = 0.0
     bleu1 = 0.0
     bleu4 = 0.0
     another_rouge = 0.0
     preds = []
     sample_scores = []
+    
+
     for i in range(0, len(start)):
         #print (context[i])
         #print (start[i], end[i])
@@ -71,18 +73,26 @@ def compute_scores(rouge, rrrouge, start, end, context, a1, a2, show=False):
             predicted_span = 'NO-ANSWER-FOUND'
         if show:
             print ('Extracted Span %s' % predicted_span)
-        #print ("Sample output " + str(start[i]) +" " + str(end[i]) + " " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
-        #score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
+
+        
+        # score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
         #return score
         #print ("Sample output " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
-        rouge_score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
+        # max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
+        curr_rouge_score = max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
+        rouge_score += curr_rouge_score
+        curr_another_rouge = rrrouge.calc_score([predicted_span], [a1[i], a2[i]])
         bleu1 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(1, 0, 0, 0))
         bleu4 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(0.25, 0.25, 0.25, 0.25))
-        another_rouge += rrrouge.calc_score([predicted_span], [a1[i], a2[i]])
+        another_rouge += curr_another_rouge
         #bleu1 += compute_bleu([[a1[i],a2[i]]], [predicted_span], max_order=1)[0]
         #bleu4 += compute_bleu([[a1[i],a2[i]]], [predicted_span])[0]
         preds.append(predicted_span)
         sample_scores.append(another_rouge)
+        output_file = "Sample output " + str(start[i]) +" " + str(end[i]) + " " + predicted_span + "\n A1 " \
+                        + a1[i] + "\n A2 " + a2[i] + " " + str(curr_rouge_score) + " " + str(curr_another_rouge) +"\n\n"
+        f.write(output_file)
+
     return (rouge_score, bleu1, bleu4, another_rouge, preds, sample_scores)
 
 def generate_answer(indices, id2words):
@@ -129,7 +139,8 @@ def train_full(args):
         training_data = pickle.load(f)
     with open(args.dev_file, 'rb') as f:
         dev_data = pickle.load(f)
-    w2i, tag2i, ner2i, c2i, common_vocab = build_fulltext_dicts(training_data, args.min_occur)
+    # w2i, tag2i, ner2i, c2i, common_vocab = build_fulltext_dicts(training_data, args.min_occur)
+    w2i, tag2i, ner2i, c2i, common_vocab = build_fulltext_dicts_wscores(training_data, args.min_occur)
     id2words = {}
     for k, v in common_vocab.items():
         id2words[v] = k
@@ -139,12 +150,12 @@ def train_full(args):
     tag2i['<pad>'] = 0 
     tag2i['<unk>'] = 1
     logger.info('Converting to index')
-    train = convert_fulltext(training_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=100, build_chunks=True)
-    dev = convert_fulltext(dev_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=100, build_chunks=True)
+    train = convert_fulltext_wscores(training_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=100, build_chunks=True)
+    dev = convert_fulltext_wscores(dev_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=100, build_chunks=True)
     train = FulltextDataset(train, args.train_batch_size)
     dev = FulltextDataset(dev, args.dev_batch_size)
-    train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=1, num_workers = NUM_WORKERS, collate_fn=mCollateFn)
-    dev_loader = torch.utils.data.DataLoader(dev, batch_size=1, num_workers = NUM_WORKERS, collate_fn=mCollateFn)
+    train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=1, num_workers = NUM_WORKERS, collate_fn=mCollateFn_wscores)
+    dev_loader = torch.utils.data.DataLoader(dev, batch_size=1, num_workers = NUM_WORKERS, collate_fn=mCollateFn_wscores)
     logger.info('Generating embeddings')
     embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
     embeddings = torch.from_numpy(embeddings).float()
@@ -157,8 +168,8 @@ def train_full(args):
                             args.pos_emb_size, embeddings, len(tag2i)+2, len(w2i)+4,
                             args.emb_dropout, args.rnn_dropout)
     ir_model = AttentionRM(rc_model.word_embeddings, rc_model.pos_emb, pos_vocab_size=len(tag2i))
-    ag_model = AnswerGenerator(input_size, args.hidden_size, args.num_layers, rc_model.word_embeddings, embeddings.shape[1], len(common_vocab)+4, embeddings.shape[0], args.emb_dropout, args.rnn_dropout)
-    model = EndToEndModel(ir_model, rc_model, ag_model)
+    # ag_model = AnswerGenerator(input_size, args.hidden_size, args.num_layers, rc_model.word_embeddings, embeddings.shape[1], len(common_vocab)+4, embeddings.shape[0], args.emb_dropout, args.rnn_dropout)
+    model = EndToEndModel(ir_model, rc_model, ag_model=None)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
@@ -183,10 +194,11 @@ def train_full(args):
         if ITER >= args.RL_loss_after:
             model.use_RLLoss = True
         # pr.enable()
+        total_samples = 0
         for batch in tqdm.tqdm(train_loader):
             global_step += 1
             #print (global_step)
-            q, passage, avec1, avec2, qlens, slens, alens, a1, a2, p_words = batch
+            q, passage, avec1, avec2, qlens, slens, alens, a1, a2, p_words, rs, bm25s = batch
             # print(q.dtype, passage.dtype, a.dtype, qlens.dtype, slens.dtype, alens.dtype)
             # if global_step == 20:
             #     pr.disable()
@@ -205,7 +217,7 @@ def train_full(args):
                 slens = slens.cuda()
                 alens = alens.cuda()
 
-            batch_loss, sidx, eidx = model(q, passage, avec1, avec2, qlens, slens, alens, p_words, a1, a2)
+            batch_loss, sidx, eidx = model(q, passage, avec1, avec2, qlens, slens, alens, p_words, a1, a2, rs, bm25s)
             optimizer.zero_grad()
             batch_loss.backward()
 
@@ -217,6 +229,7 @@ def train_full(args):
             if global_step % 100 == 0:
                 logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
             # break
+            total_samples += len(q)
             #rc_model.word_embeddings[0].weight.data[trained_idx] = fixed_embeddings
             # pr.disable()
             # s = io.StringIO()
@@ -226,8 +239,11 @@ def train_full(args):
             # return
             # if global_step % 100 == 0:
             #     logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
-        logger.info("iter %r global_step %s : train loss/batch=%.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), time.time() - start_time))
+
+        logger.info("iter %r global_step %s : train loss/batch=%.4f, time=%.2fs" % (ITER, global_step, train_loss/total_samples, time.time() - start_time))
         model.eval()
+        
+        f = open("output_spans.txt", 'w')
         with torch.no_grad():
             rouge_scores = 0.0
             bleu1_scores = 0.0
@@ -246,12 +262,13 @@ def train_full(args):
                 # dev_loss += 0# batch_loss.cpu().item()
                 # print(context)
 
-                batch_score = compute_scores(rouge, rrrouge, sidx, eidx, context, a1, a2)
+                batch_score = compute_scores(rouge, rrrouge, sidx, eidx, context, a1, a2, f)
                 # gen_rouge += generate_scores(rouge, generate_output.cpu().numpy(), id2words, a1, a2)
                 rouge_scores += batch_score[0]
                 bleu1_scores += batch_score[1]
                 bleu4_scores += batch_score[2]
                 another_rouge += batch_score[3]
+                
             avg_rouge = rouge_scores / len(dev)
             avg_bleu1 = bleu1_scores / len(dev)
             avg_bleu4 = bleu4_scores / len(dev)
@@ -262,7 +279,7 @@ def train_full(args):
                 best = avg_rouge
                 if args.save_results:
                     torch.save(model, 'best_model2')
-                    
+        f.close()
 
 def main(args):
     global logger

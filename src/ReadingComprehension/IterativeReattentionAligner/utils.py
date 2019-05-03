@@ -48,11 +48,124 @@ class FulltextDataset(torch.utils.data.Dataset):
         print (len(self.data))
 
     def __len__(self):
+        
+        print("Total amount of data %d " % (len(self.data)))
         return len(self.data)
 
     def __getitem__(self, idx):
         batch = self.data[idx]
         return batch
+
+
+def mCollateFn_wscores(batch):
+    Qwords = []
+    Qtags = []
+    Qners = []
+    Qchars = []
+    A1 = []
+    A2 = []
+    Passages = []
+    Passagestags = []
+    Passageswords = []
+    assert len(batch) == 1
+    batch = batch[0]
+    idset = []
+    RS = []
+    BM25S = []
+    for i, (cid,qw,qt,qn,qc,a1,a2,p,rs,bm25s) in enumerate(batch):
+        #for i, (cid,qw,qt,qn,qc,a1,a2,p) in enumerate(sample):
+        idset.append(cid)
+        Qwords.append(qw)
+        Qtags.append(qt)
+        Qners.append(qn)
+        Qchars.append(qc)
+        A1.append(a1)
+        A2.append(a2)
+        RS.append(rs)
+        BM25S.append(bm25s)
+
+        Passages.append([sent[0] for sent in p]) # one question may be assocaited with multiple passages. 
+        Passagestags.append([sent[1] for sent in p])
+        Passageswords.append([sent[4] for sent in p])
+
+        print([len(sent[0]) for sent in p], [len(sent[1]) for sent in p])
+
+    print("____________")
+    qlens = torch.tensor([len(q) for q in Qwords]).long()
+    #plens = torch.tensor([len(p) for p in Passages]).long()
+    slens = torch.tensor([len(s) for s in Passages]).long()   
+    staglens = torch.tensor([len(s) for s in Passagestags]).long()   
+
+    sent_lens = []
+    max_sentence = -1000
+    for s in Passages:
+        sentsentlens = []
+        for ss in s:
+            len_c = len(ss)
+            sentsentlens.append(len_c)
+            if len_c > max_sentence:
+                max_sentence = len_c
+        sent_lens.append(sentsentlens)
+
+    sent_lenstags = []
+    max_sentence_tags = -1000
+    for s in Passagestags:
+        sentsentlens = []
+        for ss in s:
+            len_c = len(ss)
+            sentsentlens.append(len_c)
+            if len_c > max_sentence_tags:
+                max_sentence_tags = len_c
+        sent_lenstags.append(sentsentlens)
+
+    sent_lens = torch.Tensor(sent_lens).long()
+    sent_lenstags = torch.Tensor(sent_lenstags).long()
+
+    alens = torch.tensor([len(a) for a in A1]).long()
+
+    RStensor = torch.tensor(RS).float()
+    BM25Stensor = torch.tensor(BM25S).float()
+
+    max_q_len = torch.max(qlens)
+    max_s_len = torch.max(slens)
+    max_a_len = torch.max(alens)
+    max_stag_len = torch.max(staglens)
+
+    Qtensor = torch.zeros(len(batch), max_q_len).long()
+    Qtagtensor = torch.zeros(len(batch), max_q_len).long()
+
+    Ptensor = torch.zeros(len(Passages), max_sentence,  max_s_len).long()
+    Ptagtensor = torch.zeros(len(Passages), max_sentence_tags, max_stag_len).long()
+
+    A1tensor = torch.zeros(len(batch), max_a_len).long() 
+    A2tensor = torch.zeros(len(batch), max_a_len).long()    
+
+
+
+    for i in range(len(batch)):
+        Qtensor[i, :qlens[i]] = torch.tensor(Qwords[i])
+        Qtagtensor[i, :qlens[i]] = torch.tensor(Qtags[i])
+        # A1tensor[i, :alens[i]] = torch.tensor(A1[i])
+        # A2tensor[i, :alens[i]] = torch.tensor(A2[i])
+        
+        for j in range(len(Passages)):
+            for z in range(len( Passages[j] )):
+                # print(slens[j],  len(Passages[j]))
+                # print("-----------------")
+                # print(j, z)
+                print(len((Passages[j][z])), len(Passagestags[j][z]))
+                # print(sent_lens[j][z])
+                Ptensor[j,z,:sent_lens[j][z]] = torch.tensor(Passages[j][z])
+
+        for j in range(len(Passages)):
+            for z in range(len( Passagestags[j] )):
+                # print(sent_lenstags[j][z])
+                Ptagtensor[j,z,:sent_lenstags[j][z]] = torch.tensor(Passagestags[j][z])
+
+    Ptensor = torch.cat([Ptensor.unsqueeze(2), Ptagtensor.unsqueeze(2)], dim=2)
+    Qtensor = torch.cat([Qtensor.unsqueeze(2), Qtagtensor.unsqueeze(2)], dim=2)
+    return Qtensor, Ptensor, None, None, qlens, slens, alens, A1, A2, Passageswords, RStensor, BM25Stensor
+
 
 def mCollateFn(batch):
     Qwords = []
@@ -67,7 +180,9 @@ def mCollateFn(batch):
     assert len(batch) == 1
     batch = batch[0]
     idset = []
-    for i, (cid,qw,qt,qn,qc,a1,a2,p) in enumerate(batch):
+    RS = []
+    BM25S = []
+    for i, (cid,qw,qt,qn,qc,a1,a2,p,rs,bm25s) in enumerate(batch):
         #for i, (cid,qw,qt,qn,qc,a1,a2,p) in enumerate(sample):
         idset.append(cid)
         Qwords.append(qw)
@@ -76,11 +191,13 @@ def mCollateFn(batch):
         Qchars.append(qc)
         A1.append(a1)
         A2.append(a2)
+        RS.append(rs)
+        BM25S.append(bm25s)
         if i == 0:
             Passages = [sent[0] for sent in p]
             Passagestags = [sent[1] for sent in p]
             Passageswords = [sent[4] for sent in p]
-    assert len(set(idset)) == 1
+    # assert len(set(idset)) == 1
     #max_q_len = max([len(q) for q in Qwords])
     #max_p_len = max([len(p) for p in Passages])
     #max_s_len = max([len(s) for s in Passages])
@@ -90,6 +207,10 @@ def mCollateFn(batch):
     #plens = torch.tensor([len(p) for p in Passages]).long()
     slens = torch.tensor([len(s) for s in Passages]).long()   # The assumption is that passages in one batch are all the same
     alens = torch.tensor([len(a) for a in A1]).long()
+
+    RStensor = torch.tensor(RS).float()
+    BM25Stensor = torch.tensor(BM25S).float()
+
     max_q_len = torch.max(qlens)
     max_s_len = torch.max(slens)
     max_a_len = torch.max(alens)
@@ -110,7 +231,162 @@ def mCollateFn(batch):
                 Ptagtensor[j,:slens[j]] = torch.tensor(Passagestags[j])
     Ptensor = torch.cat([Ptensor.unsqueeze(2), Ptagtensor.unsqueeze(2)], dim=2)
     Qtensor = torch.cat([Qtensor.unsqueeze(2), Qtagtensor.unsqueeze(2)], dim=2)
-    return Qtensor, Ptensor, None, None, qlens, slens, alens, A1, A2, Passageswords
+    return Qtensor, Ptensor, None, None, qlens, slens, alens, A1, A2, Passageswords, RStensor, BM25Stensor
+
+def build_fulltext_dicts_wscores(data, min_occur=100):
+    w2i = Counter()
+    tag2i = Counter()
+    ner2i = Counter()
+    c2i = Counter()
+    context_cache = {}
+
+    for cid in tqdm.tqdm(data):
+        context = cid['context']
+        q = cid['qaps']
+
+        for w in q['question_tokens']:
+            w2i[w] += 1
+        for w in q['answer1_tokens']:
+            w2i[w] += 1
+        for w in q['answer2_tokens']:
+            w2i[w] += 1
+        for w in q['question_pos']:
+            tag2i[w] += 1
+
+        # print(context)
+
+        # for para in context:
+        for sent in context:
+            for w in sent[1]:
+                w2i[w] += 1
+                tag2i[w] += 1
+
+    word_dict = {}
+    tag_dict = {}
+    ner_dict = {}
+    char_dict = {}
+    common_vocab = {}
+
+    for i, (k, v) in enumerate(w2i.most_common()):
+        if v >= min_occur:
+            common_vocab[k] = i + 4                         # <SOS> for 2 <EOS> for 3
+        word_dict[k] = i + 4 
+    for i, (k, v) in enumerate(tag2i.most_common()):
+        tag_dict[k] = i + 2
+
+    for k,v in common_vocab.items():
+        assert v == word_dict[k]
+    return word_dict, tag_dict, ner_dict, char_dict, common_vocab
+
+
+def convert_fulltext_wscores(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, build_chunks=False):
+    context_cache = {}
+    for cid in tqdm.tqdm(data):
+        # context = data[cid]['full_text']
+        context = cid['context']
+        rouge_scores = cid['scores']
+        bm25_scores = cid['BM25_scores']
+
+        q = cid['qaps']
+        qners = []
+        qchars = []
+        qidx = [w2i.get(w, w2i['<unk>']) for w in q['question_tokens']]       
+        qtags = [tag2i.get(w, tag2i['<unk>']) for w in q['question_pos']]
+        if random.random() > 0.5:
+            real_aidx = [w2i.get(w, w2i['<unk>']) for w in q['answer1_tokens']]
+            target_aidx = [common_vocab.get(w, w2i['<unk>']) for w in q['answer1_tokens']]  
+        else:
+            real_aidx = [w2i.get(w, w2i['<unk>']) for w in q['answer2_tokens']]
+            target_aidx = [common_vocab.get(w, w2i['<unk>']) for w in q['answer2_tokens']]  
+        a1_string = q['answers'][0]
+        a2_string = q['answers'][1]
+        #qners = [ner2i.get(w, ner2i['<unk>']) for w in q['question_ner']]
+        #qchars = [[c2i.get(c, c2i['<unk>']) for c in w] for w in q['question_tokens']]
+        # if cid in context_cache:
+        #     passage_idxs = context_cache[cid]
+        # else:
+        passage_idxs = []
+        if not build_chunks:
+            # for para in context:
+            for sent in context:
+                words = sent[1]
+                pos = sent[2]
+                ner = sent[3]
+                neridx = []
+                charidx = []
+                widx = [w2i.get(w, w2i['<unk>']) for w in words]
+                posidx = [tag2i.get(p, tag2i['<unk>']) for p in pos]
+                #neridx = [ner2i.get(n, ner2i['<unk>']) for n in ner]
+                #charidx = [[c2i.get(c, c2i['<unk>']) for c in w] for w in words]
+                if max_len is not None and len(widx) > max_len:
+                    curr = 0
+                    while curr+max_len < len(widx):
+                        passage_idxs.append((widx[curr:curr+max_len], posidx[curr:curr+max_len], [], [], words[curr:curr+max_len]))
+                        curr += max_len
+                    passage_idxs.append((widx[curr:], posidx[curr:], [], [], words[curr:]))
+                else:
+                    passage_idxs.append((widx, posidx, neridx, charidx, words))
+        else:
+            assert max_len is not None
+            widx = []
+            posidx = [] 
+            neridx = []
+            charidx = []
+            words_buff = []
+           
+            for i, sent in enumerate(context):
+                words = sent[1]
+                pos = sent[2]
+                ner = sent[3]
+                print (q['question'])
+                print (i, q['_id'], len(words), len(pos), len(ner))
+                
+                assert len(words) == len(pos)
+                tmp_w = [w2i.get(w, w2i['<unk>']) for w in words]
+                tmp_pos = [tag2i.get(p, tag2i['<unk>']) for p in pos]
+                if len(tmp_w) > max_len:
+                    if len(widx) != 0:
+                        if (len(widx) != len(posidx)):
+                            print ("Not equal ")
+                            break
+                        passage_idxs.append((widx, posidx, neridx, charidx, words_buff))
+                        widx = []
+                        posidx = []
+                        words_buff = []
+                    curr = 0
+                    while curr+max_len < len(tmp_w):
+                        if (len(tmp_w[curr:curr+max_len]) != len(tmp_pos[curr:curr+max_len])):
+                            print ("Not equal ")
+                            break
+                        passage_idxs.append((tmp_w[curr:curr+max_len], tmp_pos[curr:curr+max_len], [], [], words[curr:curr+max_len]))
+                        curr += max_len
+                    assert len(widx) == 0
+                    widx.extend(tmp_w[curr:])
+                    posidx.extend(tmp_pos[curr:])
+                    words_buff.extend(words[curr:])
+                elif len(tmp_w) + len(widx) > max_len:
+                    if (len(widx) != len(posidx)):
+                        print ("Not equal ")
+                        break
+                    passage_idxs.append((widx, posidx, neridx, charidx, words_buff))
+                    widx = tmp_w
+                    posidx = tmp_pos
+                    words_buff = words
+                else:
+                    widx.extend(tmp_w)
+                    posidx.extend(tmp_pos)
+                    words_buff.extend(words)
+
+            if len(widx) > 0:
+                passage_idxs.append((widx, posidx, neridx, charidx, words_buff))     
+
+            # context_cache[cid] = passage_idxs
+            if len(passage_idxs) > 0:
+                # print("YIELDING ...")
+                yield(cid, qidx, qtags, qners, qchars, a1_string, a2_string, passage_idxs, rouge_scores, bm25_scores)
+                # yield(cid, qidx, qtags, qners, qchars, real_aidx, target_aidx, passage_idxs)
+
+
 
 def build_fulltext_dicts(data, min_occur=100):
     w2i = Counter()
@@ -119,8 +395,9 @@ def build_fulltext_dicts(data, min_occur=100):
     c2i = Counter()
     context_cache = {}
     for cid in tqdm.tqdm(data):
-        context = data[cid]['full_text']
-        for q in data[cid]['qaps']:
+        context = data[cid]['full_text']    
+        # context = cid['context']
+        for q in cid['qaps']:
             for w in q['question_tokens']:
                 w2i[w] += 1
             for w in q['answer1_tokens']:
@@ -158,6 +435,7 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, b
     context_cache = {}
     for cid in tqdm.tqdm(data):
         context = data[cid]['full_text']
+
         for q in data[cid]['qaps']:
             qners = []
             qchars = []
@@ -238,8 +516,8 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, b
                         passage_idxs.append((widx, posidx, neridx, charidx, words_buff))     
                 context_cache[cid] = passage_idxs
             if len(passage_idxs) > 0:
-                yield(cid, qidx, qtags, qners, qchars, a1_string, a2_string, passage_idxs)
-                # yield(cid, qidx, qtags, qners, qchars, real_aidx, target_aidx, passage_idxs)
+                # yield(cid, qidx, qtags, qners, qchars, a1_string, a2_string, passage_idxs, rouge_scores, bm25_scores)
+                yield(cid, qidx, qtags, qners, qchars, real_aidx, target_aidx, passage_idxs)
 
 
 def build_dicts(data):    

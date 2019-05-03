@@ -10,7 +10,7 @@ class EndToEndModel(nn.Module):
     """docstring for End2EndModel"""
     def __init__(self, ir_model, rc_model, ag_model, n_ctx_sents=3):
         super(EndToEndModel, self).__init__()
-        self.ir_model1 = ir_model.eval()
+        self.ir_model1 = ir_model#.eval()
         self.ir_model2 = ir_model
         self.rc_model = rc_model
         self.ag_model = ag_model
@@ -54,7 +54,11 @@ class EndToEndModel(nn.Module):
     #           c_scores = self.ir_model(q_, c, qlen_, clen)
     #       #print(c_scores.shape)          
 
-    def forward(self, q, c, avec1, avec2, qlen, clen, alen, p_words, a1, a2, c_batch_size=512):
+    # def forward(self, q, c, avec1, avec2, qlen, clen, alen, p_words, a1, a2, c_batch_size=512):
+
+
+
+    def forward(self, q, c, avec1, avec2, qlen, clen, alen, p_words, a1, a2, rs, bm25s, c_batch_size=512):
         # print(q.shape, c.shape, a.shape)
         selected_sents = []     
         string_sents = []
@@ -65,7 +69,7 @@ class EndToEndModel(nn.Module):
         #   qlen = qlen.expand(2)
 
         #   avec1 = avec1.exp
-        
+        self.ir_model1 = self.ir_model1.eval()
         with torch.no_grad():
             c_scores = self.ir_model1.forward_singleContext(q, c, qlen, clen,
                                                         batch_size=c_batch_size)
@@ -77,6 +81,8 @@ class EndToEndModel(nn.Module):
             
             ctx1 = torch.stack(ctx1, dim=0)
             ctx_len1 = torch.stack(ctx_len1, dim=0)         
+
+        self.ir_model2 = self.ir_model2.train()
 
         for i in range(len(ctx1)):
     
