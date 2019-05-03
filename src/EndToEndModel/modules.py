@@ -10,7 +10,7 @@ from ReadingComprehension.IterativeReattentionAligner.CSMrouge import RRRouge
 class EndToEndModel(nn.Module):
     """docstring for End2EndModel"""
     def __init__(self, ir_model1, ir_model2, rc_model, ag_model, w2i, c2i, 
-                    n_ctx1_sents=6, n_ctx2_sents=5, chunk_size=15, use_ir2=True):
+                    n_ctx1_sents=6, n_ctx2_sents=5, chunk_size=15, use_ir2=False):
         super(EndToEndModel, self).__init__()
         self.ir_model1 = ir_model1
         self.ir_model2 = ir_model2
@@ -43,12 +43,7 @@ class EndToEndModel(nn.Module):
         c_scores = torch.log(F.gumbel_softmax(c_scores))
 
         if self.ir_model1.training:
-            best_sent_idx = []
-            for i in range(q.shape[0]):
-                # rouge = self.getRouge(p_words, a1[i], a2[i])
-                best_i = torch.argmax(c_rouge, dim=0).to(c.device)
-                best_sent_idx.append(best_i)
-            best_sent_idx = torch.stack(best_sent_idx, dim=0)
+            best_sent_idx = torch.argmax(c_rouge, dim=1).to(c.device)
             ir1_loss = self.ir_loss(c_scores, best_sent_idx)
         else:
             ir1_loss = 0

@@ -67,6 +67,7 @@ def mCollateFn(batch):
     Passages = []
     Passagestags = []
     Passageswords = []
+    Passagesrouge = []
     assert len(batch) == 1
     batch = batch[0]
     idset = []
@@ -85,7 +86,7 @@ def mCollateFn(batch):
             Passagesners = [sent[2] for sent in p]
             Passageschars = [sent[3] for sent in p]
             Passageswords = [sent[4] for sent in p]
-            Passagesrouge = [sent[5] for sent in p]
+        Passagesrouge.append([sent[5] for sent in p])        
     assert len(set(idset)) == 1
     #max_q_len = max([len(q) for q in Qwords])
     #max_p_len = max([len(p) for p in Passages])
@@ -98,11 +99,14 @@ def mCollateFn(batch):
     slens = torch.tensor([len(s) for s in Passages]).long()   # The assumption is that passages in one batch are all the same
     sclens = torch.tensor([len(pc) for pc in Passageschars]).long()
     alens = torch.tensor([len(a) for a in A1]).long()
+    rlens = torch.tensor([len(pr) for pr in Passagesrouge])    
+
     max_q_len = torch.max(qlens)
     max_qc_len = torch.max(qclens)
     max_s_len = torch.max(slens)
     max_sc_len = torch.max(sclens)
     max_a_len = torch.max(alens)
+    max_r_len = torch.max(rlens)
 
     Qtensor = torch.zeros(len(batch), max_q_len).long()
     Qtagtensor = torch.zeros(len(batch), max_q_len).long()
@@ -113,7 +117,7 @@ def mCollateFn(batch):
     Ptagtensor = torch.zeros(len(Passages), max_s_len).long()
     Pnertensor = torch.zeros(len(Passages), max_s_len).long()
     Pchartensor = torch.zeros(len(Passages), max_s_len, 16).long()    
-    Prougetensor = torch.FloatTensor(Passagesrouge)
+    Prougetensor = torch.zeros(len(batch), max_r_len).float()
     
     A1tensor = torch.zeros(len(batch), max_a_len).long() 
     A2tensor = torch.zeros(len(batch), max_a_len).long()    
@@ -122,6 +126,7 @@ def mCollateFn(batch):
         Qtagtensor[i, :qlens[i]] = torch.tensor(Qtags[i])
         Qnertensor[i, :qlens[i]] = torch.tensor(Qners[i])
         Qchartensor[i, :qclens[i]] = torch.tensor(Qchars[i])
+        Prougetensor[i,:rlens[i]] = torch.tensor(Passagesrouge[i])
         # A1tensor[i, :alens[i]] = torch.tensor(A1[i])
         # A2tensor[i, :alens[i]] = torch.tensor(A2[i])
         if i == 0:
@@ -129,7 +134,13 @@ def mCollateFn(batch):
                 Ptensor[j,:slens[j]] = torch.tensor(Passages[j])
                 Ptagtensor[j,:slens[j]] = torch.tensor(Passagestags[j])
                 Pnertensor[j,:slens[j]] = torch.tensor(Passagesners[j])
-                Pchartensor[j,:sclens[j]] = torch.tensor(Passageschars[j])                
+                Pchartensor[j,:sclens[j]] = torch.tensor(Passageschars[j])         
+
+    # print(Prougetensor.shape)
+    # print((Prougetensor[0] == Prougetensor[1]).all())
+    # print((Prougetensor[0] == 0).all())
+    # print(torch.max(Prougetensor, dim=1)[0])
+
     Ptensor = torch.cat([Ptensor.unsqueeze(2), Ptagtensor.unsqueeze(2), 
                             Pnertensor.unsqueeze(2)], dim=2)
     Qtensor = torch.cat([Qtensor.unsqueeze(2), Qtagtensor.unsqueeze(2), 
@@ -187,6 +198,13 @@ def build_fulltext_dicts(data, min_occur=100):
         assert v == word_dict[k]
     return word_dict, tag_dict, ner_dict, char_dict, common_vocab
 
+def spansToRouge(passage_idxs, rouge_scores):
+    new_passage_idxs = []
+    for pi in passage_idxs:
+        (widx, posidx, neridx, word_chars, words_buff, chunk_idx) = pi
+        rouge = max([rouge_scores.get(idx, 0.0) for idx in chunk_idx])
+        new_passage_idxs.append((widx, posidx, neridx, word_chars, words_buff, rouge))
+    return new_passage_idxs
 
 def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, 
                         build_chunks=False):
@@ -218,7 +236,8 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None,
                 rouge_scores[(paraI, sentI)] = score
 
             if cid in context_cache:
-                passage_idxs = context_cache[cid]
+                passage_idxs = context_cache[cid]                
+                passage_idxs = spansToRouge(passage_idxs, rouge_scores)
             else:
                 passage_idxs = []
                 if not build_chunks:
@@ -241,7 +260,7 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None,
                                     curr += max_len
                                 passage_idxs.append((widx[curr:], posidx[curr:], [], [], words[curr:]))
                             else:
-                                passage_idxs.append((widx, posidx, neridx, charidx, words, rouge))
+                                passage_idxs.append((widx, posidx, neridx, charidx, words))
                 else:
                     assert max_len is not None
                     widx = []
@@ -249,64 +268,72 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None,
                     neridx = []
                     charidx = []
                     words_buff = []
+                    chunk_idx = []
                     for paraI, para in enumerate(context):
                         for sentI, sent in enumerate(para):
                             words = sent[1]
                             pos = sent[2]
                             ner = sent[3]
                             # rouge = max(rouge, r.calc_score([" ".join(words)], [a1_string, a2_string]))
-                            rouge = max(rouge, rouge_scores.get((paraI, sentI), 0.0))
+                            # rouge = max(rouge, rouge_scores.get((paraI, sentI), 0.0))
                             # print(rouge)                            
                             tmp_w = [w2i.get(w, w2i['<unk>']) for w in words]
                             tmp_pos = [tag2i.get(p, tag2i['<unk>']) for p in pos]
                             tmp_ner = [ner2i.get(n, ner2i['<unk>']) for n in ner]
+
                             if len(tmp_w) > max_len:
                                 if len(widx) != 0:
                                     # print(1, rouge)
-                                    passage_idxs.append((widx, posidx, neridx, words2charIds(words_buff), 
-                                                        words_buff, rouge))
-                                    rouge = 0                                    
+                                    passage_idxs.append((widx, posidx, neridx, 
+                                                        words2charIds(words_buff), 
+                                                        words_buff, chunk_idx[:]))                             
                                     widx = []
                                     posidx = []
                                     neridx = []
                                     words_buff = []
-                                curr = 0
+                                    chunk_idx = []
+
+                                chunk_idx.append((paraI, sentI))
+                                curr = 0                                
                                 while curr+max_len < len(tmp_w):
                                     _words = words[curr:curr+max_len]
                                     # print(2, rouge)
                                     passage_idxs.append((tmp_w[curr:curr+max_len], 
                                                         tmp_pos[curr:curr+max_len], 
                                                         tmp_ner[curr:curr+max_len], 
-                                                        words2charIds(_words), _words, rouge))
-                                    rouge = 0                                    
+                                                        words2charIds(_words), _words,
+                                                        chunk_idx[:]))                          
                                     curr += max_len
                                 assert len(widx) == 0
-                                widx.extend(tmp_w[curr:])
+                                widx.extend(tmp_w[curr:])                                
+                                if len(widx) == 0:
+                                    chunk_idx = []
                                 posidx.extend(tmp_pos[curr:])
                                 neridx.extend(tmp_ner[curr:])
                                 words_buff.extend(words[curr:])
-                            elif len(tmp_w) + len(widx) > max_len:
-                                # print(3, rouge)
+
+                            elif len(tmp_w) + len(widx) > max_len:                                
                                 passage_idxs.append((widx, posidx, neridx, words2charIds(words_buff), 
-                                                    words_buff, rouge)) 
-                                rouge = 0                               
+                                                    words_buff, chunk_idx[:]))                               
                                 widx = tmp_w
                                 posidx = tmp_pos
                                 neridx = tmp_ner
                                 words_buff = words
+                                chunk_idx = [(paraI, sentI)]
                             else:
                                 widx.extend(tmp_w)
                                 posidx.extend(tmp_pos)
                                 neridx.extend(tmp_ner)
                                 words_buff.extend(words)
+                                chunk_idx.append((paraI, sentI, len(words)))
                     if len(widx) > 0:
-                        # print(4, rouge)
                         passage_idxs.append((widx, posidx, neridx, words2charIds(words_buff), 
-                                            words_buff, rouge))
-                        rouge = 0                        
+                                            words_buff, chunk_idx[:]))
+                        rouge = 0                       
                 context_cache[cid] = passage_idxs
+                passage_idxs = spansToRouge(passage_idxs, rouge_scores)
             if len(passage_idxs) > 0:
-                # print(passage_idxs[-1])
+                # print(passage_idxs[-1])                
                 yield(cid, qidx, qtags, qners, qchars, a1_string, a2_string, passage_idxs)
                 # yield(cid, qidx, qtags, qners, qchars, real_aidx, target_aidx, passage_idxs)
 

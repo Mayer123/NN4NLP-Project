@@ -54,6 +54,7 @@ def add_arguments(parser):
     parser.add_argument('--min_occur', type=str, default=100, help='minimum occurance of a word to be counted in common vocab')  
     parser.add_argument('--load_ir_model', type=str, default='', help='mode of training') 
     parser.add_argument('--eval_only', action='store_true', help='whether to store the results')
+    parser.add_argument('--use_ir2', action='store_true', help='whether to store the results')
 
 def compute_scores(rouge, rrrouge, start, end, context, a1, a2, show=False):
     rouge_score = 0.0
@@ -178,7 +179,7 @@ def train_full(args):
     ag_model = None # AnswerGenerator(input_size, args.hidden_size, args.num_layers, rc_model.word_embeddings, embeddings.shape[1], len(common_vocab)+4, embeddings.shape[0], args.emb_dropout, args.rnn_dropout)
     model = EndToEndModel(ir_model, 
                             AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i)), 
-                            rc_model, ag_model, w2i, c2i)
+                            rc_model, ag_model, w2i, c2i, use_ir2=args.use_ir2)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0008, weight_decay=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
