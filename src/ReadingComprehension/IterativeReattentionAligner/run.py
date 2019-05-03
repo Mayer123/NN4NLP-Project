@@ -58,7 +58,7 @@ def add_arguments(parser):
     parser.add_argument('--eval_only', action='store_true', help='whether to store the results')
     parser.add_argument('--use_ir2', action='store_true', help='whether to store the results')
     parser.add_argument('--alt_ir_training', action='store_true', help='whether to store the results')
-    parser.add_argument('--n_chunks', type=int, default=1, help='number of chunks to select with the first IR model')  
+    parser.add_argument('--n_chunks', type=int, default=3, help='number of chunks to select with the first IR model')  
     parser.add_argument('--n_spans', type=int, default=5, help='number of spans to select using the second IR model')  
     parser.add_argument('--chunk_len', type=int, default=100, help='number of spans to select using the second IR model')  
     parser.add_argument('--span_len', type=int, default=15, help='number of spans to select using the second IR model')  
@@ -182,8 +182,8 @@ def train_full(args):
     #                         args.emb_dropout, args.rnn_dropout)
     # ir_model = AttentionRM(rc_model.word_embeddings, rc_model.pos_emb, pos_vocab_size=len(tag2i))
     if args.load_ir_model == '':
-        # ir_model = KNRM(init_emb=embeddings)
-        ir_model = BOWRM(init_emb=embeddings)
+        ir_model = KNRM(init_emb=embeddings)
+        # ir_model = BOWRM(init_emb=embeddings)
     else:
         ir_model = torch.load(args.load_ir_model)
 
@@ -241,7 +241,7 @@ def train_full(args):
                 global_step += 1
                 local_step  += 1
                 #print (global_step)
-                q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, qlens, slens, alens, a1, a2, p_words = batch                
+                q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, qlens, slens, avec1_len, alens, a1, a2, p_words = batch                
                 # print(q.dtype, passage.dtype, a.dtype, qlens.dtype, slens.dtype, alens.dtype)
                 # if global_step == 20:
                 #     pr.disable()
@@ -256,14 +256,15 @@ def train_full(args):
                     q_chars = q_chars.cuda()
                     passage = passage.cuda()
                     passage_chars = passage_chars.cuda()
-                    # avec1 = avec1.cuda()
+                    passage_rouge = passage_rouge.cuda()
+                    avec1 = avec1.cuda()
                     # avec2 = avec2.cuda()
                     qlens = qlens.cuda()
                     slens = slens.cuda()
-                    alens = alens.cuda()
+                    avec1_len = avec1_len.cuda()
 
                 rc_loss, ir1_loss, ir2_loss, sidx, eidx = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
-                                                qlens, slens, alens, p_words, a1, a2)
+                                                qlens, slens, avec1_len, p_words, a1, a2)
                 batch_loss = rc_loss+ir1_loss+ir2_loss                
                 optimizer.zero_grad()
                 batch_loss.backward()
@@ -300,7 +301,7 @@ def train_full(args):
             gen_rouge = 0.
             count = 0
             for batch in dev_loader:
-                q, q_chars, passage, passage_chars, _, avec1, avec2, qlens, slens, alens, a1, a2, p_words = batch
+                q, q_chars, passage, passage_chars, _, avec1, avec2, qlens, slens, avec, alens, a1, a2, p_words = batch
                 count += q.shape[0]
                 if use_cuda:
                     q = q.cuda()

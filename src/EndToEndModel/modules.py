@@ -31,7 +31,7 @@ class EndToEndModel(nn.Module):
     def getRouge(self, spans, a1, a2):        
         return torch.Tensor([self.rrrouge.calc_score([" ".join(span)], [a1, a2]) for span in spans])
 
-    def getSpans(self, q, c, c_chars, qlen, clen, p_words, c_rouge=None, a1=None, a2=None, 
+    def getSpans(self, q, c, c_chars, qlen, clen, p_words, bsi=None, bss=None, c_rouge=None, a1=None, a2=None, 
                     c_batch_size=512):
         # print(q.shape, c.shape, a.shape)
         selected_sents = []
@@ -45,9 +45,23 @@ class EndToEndModel(nn.Module):
 
         ir1_loss = 0
         if self.ir_model1.training:
-            max_scores, best_sent_idxs = torch.max(c_rouge, dim=1)
-            best_sent_idxs = best_sent_idxs.cuda()
-            ir1_loss = self.ir_loss(c_scores, best_sent_idxs)
+            # max_scores, best_sent_idxs = torch.max(c_rouge, dim=1)
+            # best_sent_idxs = best_sent_idxs.cuda()
+            # ir1_loss = self.ir_loss(c_scores, best_sent_idxs)
+
+            _, topk_rouge_idx = torch.topk(c_rouge, self.n_ctx1_sents, dim=1)
+            rest_rouge_idx = [[j for j in range(c_rouge.shape[1]) if j not in topk_rouge_idx[i]] for i in range(c_rouge.shape[0])]
+            
+            best_score = [c_scores[i, topk_rouge_idx[i]] for i in range(len(topk_rouge_idx))]
+            rest_score = [c_scores[i, rest_rouge_idx[i]] for i in range(len(rest_rouge_idx))]
+
+            for i in range(topk_rouge_idx.shape[0]):                   
+                _rest_score = rest_score[i].view(1,-1)
+                _best_score = best_score[i].view(-1,1).expand(-1, _rest_score.shape[1])                                       
+                diff = F.relu(1 - (_best_score - _rest_score))
+                ir1_loss += torch.mean(diff)
+            ir1_loss /= topk_rouge_idx.shape[0]
+
 
         _, topk_idx_ir1 = torch.topk(c_scores, self.n_ctx1_sents, 
                                         dim=1, sorted=False)
@@ -96,11 +110,22 @@ class EndToEndModel(nn.Module):
                 c_scores = c_scores.view(1,-1)
                 c_scores = torch.log(F.gumbel_softmax(c_scores)).squeeze(0)                
                                 
-                _, topk_idx = torch.topk(c_scores.detach(), self.n_ctx2_sents, dim=0)  
+                _, topk_idx = torch.topk(c_scores, self.n_ctx2_sents, dim=0)  
                 if self.ir_model2.training:
                     p_words_rouge = self.getRouge(new_pwords, a1[i], a2[i])                    
-                    best_sent_idx = torch.argmax(p_words_rouge, dim=0).to(c_scores.device)                    
-                    ir2_loss += self.ir_loss(c_scores.unsqueeze(0), best_sent_idx.unsqueeze(0))                   
+                    # best_sent_idx = torch.argmax(p_words_rouge, dim=0).to(c_scores.device)                    
+                    # ir2_loss += self.ir_loss(c_scores.unsqueeze(0), best_sent_idx.unsqueeze(0))                   
+
+                    _, topk_rouge_idx = torch.topk(p_words_rouge, self.n_ctx2_sents, dim=0)
+                    rest_rouge_idx = [j for j in range(p_words_rouge.shape[0]) if j not in topk_rouge_idx]
+                    
+                    best_score = c_scores[topk_rouge_idx]
+                    rest_score = c_scores[rest_rouge_idx]
+
+                    _rest_score = rest_score.view(1,-1)
+                    _best_score = best_score.view(-1,1).expand(-1, _rest_score.shape[1])                                       
+                    diff = F.relu(1 - (_best_score - _rest_score))
+                    ir2_loss += torch.mean(diff)
 
                 sents = new_ctx[topk_idx]
                 sent_lens = new_ctx_lens[topk_idx]

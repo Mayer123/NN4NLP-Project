@@ -62,6 +62,7 @@ def mCollateFn(batch):
     Qtags = []
     Qners = []
     Qchars = []
+    tA = []
     A1 = []
     A2 = []
     Passages = []
@@ -71,13 +72,14 @@ def mCollateFn(batch):
     assert len(batch) == 1
     batch = batch[0]
     idset = []
-    for i, (cid,qw,qt,qn,qc,a1,a2,p) in enumerate(batch):        
+    for i, (cid,qw,qt,qn,qc,ta,a1,a2,p) in enumerate(batch):        
         #for i, (cid,qw,qt,qn,qc,a1,a2,p) in enumerate(sample):
         idset.append(cid)
         Qwords.append(qw)
         Qtags.append(qt)
         Qners.append(qn)
         Qchars.append(qc)
+        tA.append(ta)
         A1.append(a1)
         A2.append(a2)
         if i == 0:
@@ -98,6 +100,7 @@ def mCollateFn(batch):
     #plens = torch.tensor([len(p) for p in Passages]).long()
     slens = torch.tensor([len(s) for s in Passages]).long()   # The assumption is that passages in one batch are all the same
     sclens = torch.tensor([len(pc) for pc in Passageschars]).long()
+    talens = torch.tensor([len(a) for a in tA]).long()
     alens = torch.tensor([len(a) for a in A1]).long()
     rlens = torch.tensor([len(pr) for pr in Passagesrouge])    
 
@@ -105,6 +108,7 @@ def mCollateFn(batch):
     max_qc_len = torch.max(qclens)
     max_s_len = torch.max(slens)
     max_sc_len = torch.max(sclens)
+    max_ta_len = torch.max(talens)
     max_a_len = torch.max(alens)
     max_r_len = torch.max(rlens)
 
@@ -119,6 +123,7 @@ def mCollateFn(batch):
     Pchartensor = torch.zeros(len(Passages), max_s_len, 16).long()    
     Prougetensor = torch.zeros(len(batch), max_r_len).float()
     
+    tAtensor = torch.zeros(len(batch), max_ta_len).long()
     A1tensor = torch.zeros(len(batch), max_a_len).long() 
     A2tensor = torch.zeros(len(batch), max_a_len).long()    
     for i in range(len(batch)):
@@ -127,6 +132,7 @@ def mCollateFn(batch):
         Qnertensor[i, :qlens[i]] = torch.tensor(Qners[i])
         Qchartensor[i, :qclens[i]] = torch.tensor(Qchars[i])
         Prougetensor[i,:rlens[i]] = torch.tensor(Passagesrouge[i])
+        tAtensor[i, :talens[i]] = torch.tensor(tA[i])
         # A1tensor[i, :alens[i]] = torch.tensor(A1[i])
         # A2tensor[i, :alens[i]] = torch.tensor(A2[i])
         if i == 0:
@@ -145,7 +151,7 @@ def mCollateFn(batch):
                             Pnertensor.unsqueeze(2)], dim=2)
     Qtensor = torch.cat([Qtensor.unsqueeze(2), Qtagtensor.unsqueeze(2), 
                             Qnertensor.unsqueeze(2)], dim=2)
-    return Qtensor, Qchartensor, Ptensor, Pchartensor, Prougetensor, None, None, qlens, slens, alens, A1, A2, Passageswords
+    return Qtensor, Qchartensor, Ptensor, Pchartensor, Prougetensor, tAtensor, None, qlens, slens, talens, alens, A1, A2, Passageswords
 
 def build_fulltext_dicts(data, min_occur=100):
     w2i = Counter()
@@ -334,7 +340,7 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None,
                 passage_idxs = spansToRouge(passage_idxs, rouge_scores)
             if len(passage_idxs) > 0:
                 # print(passage_idxs[-1])                
-                yield(cid, qidx, qtags, qners, qchars, a1_string, a2_string, passage_idxs)
+                yield(cid, qidx, qtags, qners, qchars, target_aidx, a1_string, a2_string, passage_idxs)
                 # yield(cid, qidx, qtags, qners, qchars, real_aidx, target_aidx, passage_idxs)
 
 

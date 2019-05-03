@@ -31,8 +31,8 @@ class WordOverlapLoss(nn.Module):
         # s1.shape = (batch, seq_len, emb_dim)
         # s1 should be the true answer
 
-        normed_s1 = s1 / torch.norm(s1, dim=2, keepdim=True)
-        normed_s2 = s2 / torch.norm(s2, dim=2, keepdim=True)
+        normed_s1 = s1 / (torch.norm(s1, dim=2, keepdim=True) + 1e-10)
+        normed_s2 = s2 / (torch.norm(s2, dim=2, keepdim=True) + 1e-10)
 
         cosine = torch.bmm(normed_s1, normed_s2.transpose(1,2)) # (batch, len(s1), len(s2))
         cosine_em = self.G(cosine)
@@ -44,9 +44,14 @@ class WordOverlapLoss(nn.Module):
 
         max_match = max_match * mask
         tot_match = torch.sum(max_match, dim=1)
-        ovrl = tot_match/s1_len.float()
+        ovrl = tot_match/(s1_len.float() + 1e-10)
 
         loss = 1 - ovrl
+        loss = torch.mean(loss, dim=0)
+        
+        if not torch.isfinite(loss).all():
+            print("bad loss")            
+
         return loss
 
 class MnemicReader(nn.Module):
@@ -73,7 +78,7 @@ class MnemicReader(nn.Module):
         #self.answerPointerModel = answerPointerModel()    
         self.aligningBlock = IterativeAligner( 2 * hidden_size, hidden_size, 1, 3, dropout=rnn_dropout)
 
-        self.loss = WordOverlapLoss()
+        self.wo_loss = WordOverlapLoss()
         self.DCRL_loss = DCRLLoss(4)
         #self.weight_a = torch.pow(torch.randn(1, requires_grad=True), 2)
         #self.weight_b = torch.pow(torch.randn(1, requires_grad=True), 2)
@@ -205,26 +210,23 @@ class MnemicReader(nn.Module):
         s_prob = s_prob.reshape(s_prob.size()[0], s_prob.size()[1])
         e_prob = e_prob.reshape(s_prob.size()[0], s_prob.size()[1])
       
+        if not torch.isfinite(probs).all():
+            print('bad probs')
+
         context_len = s_prob.shape[1]
         max_idx = torch.argmax(probs, dim=1)
         start = max_idx // context_len
         end = max_idx % context_len
         # print (start, end)
         # print ("----------------")
-        # pred_a = [c_vec[i, start[i]:end[i]] for i in range(len(start))]
         
-        # pred_a_len = [len(a) for a in pred_a]
-        # # print(len(pred_a), max(pred_a_len))
-        # padded_pred_a = torch.zeros(len(pred_a), max(pred_a_len), 
-        #                            dtype=c_vec.dtype).to(c_vec.device)
-        # for (i,x) in enumerate(pred_a):
-        #    padded_pred_a[i,:pred_a_len[i]] = x
+        pred_a = [c_vec[i, start[i]:end[i]] for i in range(len(start))]        
+        padded_pred_a = nn.utils.rnn.pad_sequence(pred_a, batch_first=True)
             
-        # pred_a_emb = self.word_embeddings(padded_pred_a)
+        pred_a_emb = self.word_embeddings(padded_pred_a)
         # # decoder_input = self.prepare_decoder_input(start, end, c_vec)
-        # a_emb = self.word_embeddings(a_vec)
-
-        # loss = self.loss(a_emb, pred_a_emb, alen, start-end)
+        a_emb = self.word_embeddings(a_vec)
+        rl_loss = self.wo_loss(a_emb, pred_a_emb, alen, end-start)
         # loss = torch.mean(loss)
 
         # if not self.use_RLLoss:
@@ -244,7 +246,7 @@ class MnemicReader(nn.Module):
 
         probs = torch.exp(probs)
 
-        rl_loss = self.DCRL_loss(probs, s_prob, e_prob, context_len, start, end, context, a1, a2)
+        # rl_loss = self.DCRL_loss(probs, s_prob, e_prob, context_len, start, end, context, a1, a2)
         
         s_prob = s_prob.reshape(s_prob.size()[0], s_prob.size()[1])
         e_prob = e_prob.reshape(s_prob.size()[0], s_prob.size()[1])
