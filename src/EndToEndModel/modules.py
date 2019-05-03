@@ -10,7 +10,7 @@ from ReadingComprehension.IterativeReattentionAligner.CSMrouge import RRRouge
 class EndToEndModel(nn.Module):
     """docstring for End2EndModel"""
     def __init__(self, ir_model1, ir_model2, rc_model, ag_model, w2i, c2i, 
-                    n_ctx1_sents=6, n_ctx2_sents=5, chunk_size=15, use_ir2=False):
+                    n_ctx1_sents=6, n_ctx2_sents=5, span_size=15, use_ir2=False):
         super(EndToEndModel, self).__init__()
         self.ir_model1 = ir_model1
         self.ir_model2 = ir_model2
@@ -18,7 +18,7 @@ class EndToEndModel(nn.Module):
         self.ag_model = ag_model
         self.n_ctx1_sents = n_ctx1_sents
         self.n_ctx2_sents = n_ctx2_sents
-        self.chunk_size = chunk_size
+        self.chunk_size = span_size
         self.i2w = {v:k for k,v in w2i.items()}
         self.c2i = c2i
         self.ir_loss = nn.NLLLoss()
@@ -31,7 +31,8 @@ class EndToEndModel(nn.Module):
     def getRouge(self, spans, a1, a2):        
         return torch.Tensor([self.rrrouge.calc_score([" ".join(span)], [a1, a2]) for span in spans])
 
-    def getSpans(self, q, c, c_chars, qlen, clen, p_words, c_rouge=None, a1=None, a2=None, c_batch_size=512):
+    def getSpans(self, q, c, c_chars, qlen, clen, p_words, c_rouge=None, a1=None, a2=None, 
+                    c_batch_size=512):
         # print(q.shape, c.shape, a.shape)
         selected_sents = []
         selected_sents_chars = []
@@ -40,15 +41,16 @@ class EndToEndModel(nn.Module):
         c_scores = self.ir_model1.forward_singleContext(q, c, qlen, clen,
                                                     batch_size=c_batch_size)
         c_scores = c_scores
-        c_scores = torch.log(F.gumbel_softmax(c_scores))
+        c_scores = torch.log(F.gumbel_softmax(c_scores))        
 
+        ir1_loss = 0
         if self.ir_model1.training:
-            best_sent_idx = torch.argmax(c_rouge, dim=1).to(c.device)
-            ir1_loss = self.ir_loss(c_scores, best_sent_idx)
-        else:
-            ir1_loss = 0
+            max_scores, best_sent_idxs = torch.max(c_rouge, dim=1)
+            best_sent_idxs = best_sent_idxs.cuda()
+            ir1_loss = self.ir_loss(c_scores, best_sent_idxs)
 
-        _, topk_idx_ir1 = torch.topk(c_scores, self.n_ctx1_sents, dim=1, sorted=False)
+        _, topk_idx_ir1 = torch.topk(c_scores, self.n_ctx1_sents, 
+                                        dim=1, sorted=False)
         
         ctx1 = [c[topk_idx_ir1[i]] for i in range(len(c_scores))]
         ctx1 = torch.stack(ctx1, dim=0)
@@ -94,7 +96,11 @@ class EndToEndModel(nn.Module):
                 c_scores = c_scores.view(1,-1)
                 c_scores = torch.log(F.gumbel_softmax(c_scores)).squeeze(0)                
                                 
-                _, topk_idx = torch.topk(c_scores, self.n_ctx2_sents, dim=0)  
+                _, topk_idx = torch.topk(c_scores.detach(), self.n_ctx2_sents, dim=0)  
+                if self.ir_model2.training:
+                    p_words_rouge = self.getRouge(new_pwords, a1[i], a2[i])                    
+                    best_sent_idx = torch.argmax(p_words_rouge, dim=0).to(c_scores.device)                    
+                    ir2_loss += self.ir_loss(c_scores.unsqueeze(0), best_sent_idx.unsqueeze(0))                   
 
                 sents = new_ctx[topk_idx]
                 sent_lens = new_ctx_lens[topk_idx]
@@ -109,12 +115,7 @@ class EndToEndModel(nn.Module):
                 string_sent = []
                 for _idx in topk_idx:
                     string_sent.append(new_pwords[_idx])
-                string_sent = np.concatenate(string_sent, axis=0)
-
-                if self.ir_model2.training:
-                    p_words_rouge = self.getRouge(new_pwords, a1[i], a2[i])
-                    best_sent_idx = torch.argmax(p_words_rouge, dim=0).to(c_scores.device)                    
-                    ir2_loss += self.ir_loss(c_scores.unsqueeze(0), best_sent_idx.unsqueeze(0))
+                string_sent = np.concatenate(string_sent, axis=0)                
             else:
                 ctx2 = new_ctx
                 ctx2_chars = new_ctx_chars
@@ -152,7 +153,9 @@ class EndToEndModel(nn.Module):
         # c_chars = torch.LongTensor(c_chars).to(c.device)
         # print(c_chars.shape)
 
-        # print(ctx.shape, q.shape) # batch, seq_len, [word_index, pos_index]
+        loss1=0
+        sidx=torch.zeros(q.shape[0]).to(q.device)
+        eidx=torch.zeros(q.shape[0]).to(q.device)
         loss1, sidx, eidx = self.rc_model(ctx[:,:,0], ctx[:,:,1], ctx[:,:,2], c_chars, ctx_len, 
                                                 q[:,:,0], q[:,:,1], q[:,:,2], q_chars, qlen, 
                                                 string_sents, avec1, alen, a1, a2)

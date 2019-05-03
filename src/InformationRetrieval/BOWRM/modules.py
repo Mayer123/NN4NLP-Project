@@ -10,60 +10,32 @@ from ReadingComprehension.IterativeReattentionAligner.modules import (Interactiv
 													AnswerPointer)
 from utils.utils import *
 
-class GaussianKernel(object):
-	"""docstring for GaussianKernel"""
-	def __init__(self, mean, std):
-		super(GaussianKernel, self).__init__()
-		self.mean = mean
-		self.std = std
-
-	def __call__(self, x):
-		sim = torch.exp(-0.5 * (x-self.mean)**2 / self.std**2)		
-		return sim
-		
-
-class KNRM(nn.Module):
+class BOWRM(nn.Module):
 	"""docstring for ConvKNRM"""
 	def __init__(self, init_emb=None, emb_trainable=True, vocab_size=None, 
-					emb_dim=100, nkernels=11, sigma=0.1, exact_sigma=0.001, dropout=0.3):
-		super(KNRM, self).__init__()
+					emb_dim=100, dropout=0.3):
+		super(BOWRM, self).__init__()
 		if init_emb is not None:
 			self.emb = nn.Embedding.from_pretrained(init_emb, 
 										freeze=(not emb_trainable))
 		else:
 			self.emb = nn.Embedding(vocab_size, emb_dim)
 		
-		self.kernels = []
-		for i in range(nkernels):
-			mu = 1/(nkernels-1) + 2*i/(nkernels-1) - 1
-
-			if mu > 1:
-				self.kernels.append(GaussianKernel(1., exact_sigma))
-			else:
-				self.kernels.append(GaussianKernel(mu, sigma))
-		
-
-		self.linear = nn.Linear(nkernels, 1, bias=False)
+		self.proj = nn.Linear(2*emb_dim, 2*emb_dim, bias=False)
+		self.linear = nn.Linear(2*emb_dim, 1, bias=False)
 		self.dropout = nn.Dropout(dropout)
+
 	def embed(self, x):
 		x_emb = self.emb(x[:,:,0])
-		x_emb = x_emb / torch.norm(x_emb, dim=2, keepdim=True)
 		return x_emb
 
-	def score(self, q_emb, d_emb, qlen, dlen):
-		sim = torch.bmm(q_emb, d_emb.transpose(1,2))
-		sim = self.dropout(sim)
-
-		kernel_counts = []
-		for K in self.kernels:
-			probs = K(sim)					
-			qt_match_count = torch.sum(probs, dim=2)					
-			total_count = torch.sum(torch.log1p(qt_match_count), dim=1)
-			kernel_counts.append(total_count)
-		kernel_counts = torch.stack(kernel_counts, dim=1)
-
-		score = self.linear(kernel_counts).squeeze(1)
-		return score
+	def score(self, q_emb, d_emb, qlen, dlen):		
+		q_sum = torch.mean(q_emb, dim=1)
+		d_sum = torch.mean(d_emb, dim=1)		
+		bow = torch.cat((q_sum, d_sum), dim=1)
+		proj = F.relu(self.proj(bow))
+		scores = self.linear(proj).squeeze(1)
+		return scores
 
 	def forward(self, q, d, qlen, dlen):
 		q_emb = self.embed(q)
@@ -83,7 +55,6 @@ class KNRM(nn.Module):
 
 			# print(c_batch.shape, clen_batch.shape)
 			# print(q_batch.shape, qlen_batch.shape)
-
 			scores[i*batch_size:(i+1)*batch_size] = self.score(q_batch, c_batch, 
 															qlen_batch, clen_batch)
 		return scores

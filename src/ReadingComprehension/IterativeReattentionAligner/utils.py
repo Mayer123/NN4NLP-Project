@@ -32,7 +32,7 @@ class FulltextDataset(torch.utils.data.Dataset):
         batch = []
         count = 0
         for sample in data:  
-            # if len(batch) == 2:
+            # if len(self.data) == 2:
             #     break
             if len(batch) == 0:
                 batch.append(sample)

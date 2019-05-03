@@ -69,6 +69,7 @@ class ConvKNRM(nn.Module):
 		self.dropout = nn.Dropout(dropout)
 	def embed(self, x):
 		x_emb = self.dropout(self.emb(x[:,:,0]))
+		x_emb = x_emb / torch.norm(x_emb, dim=2, keepdim=True)
 		return x_emb
 
 	def score(self, q_emb, d_emb, qlen, dlen):
