@@ -173,7 +173,7 @@ class AnswerPointer(nn.Module):
 
         eps = 1e-8
         for i in range(p.shape[0]):
-            p[i] = torch.triu(p[i], diagonal=1)
+            p[i] = torch.triu(p[i])
         p = (1-eps)*p + eps*torch.min(p[p != 0])        
         p = torch.log(p)        
         p = p.view(p.shape[0], -1)

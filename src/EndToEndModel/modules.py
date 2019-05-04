@@ -31,7 +31,7 @@ class EndToEndModel(nn.Module):
     def getRouge(self, spans, a1, a2):        
         return torch.Tensor([self.rrrouge.calc_score([" ".join(span)], [a1, a2]) for span in spans])
 
-    def getSpans(self, q, c, c_chars, qlen, clen, p_words, bsi=None, bss=None, c_rouge=None, a1=None, a2=None, 
+    def getSpans(self, q, c, c_chars, qlen, clen, p_words, bsi=None, bss=None, bslen=None, c_rouge=None, a1=None, a2=None, 
                     c_batch_size=512):
         # print(q.shape, c.shape, a.shape)
         selected_sents = []
@@ -40,50 +40,82 @@ class EndToEndModel(nn.Module):
 
         c_scores = self.ir_model1.forward_singleContext(q, c, qlen, clen,
                                                     batch_size=c_batch_size)
-        c_scores = c_scores
-        c_scores = torch.log(F.gumbel_softmax(c_scores))        
+        c_scores = torch.log(F.gumbel_softmax(c_scores))
+        if not torch.isfinite(c_scores).all():
+            print('bad c_scores')
+            print(c_scores)
 
         ir1_loss = 0
+
+        _, topk_idx_ir1 = torch.topk(c_scores, self.n_ctx1_sents, 
+                                        dim=1, sorted=False)
         if self.ir_model1.training:
             # max_scores, best_sent_idxs = torch.max(c_rouge, dim=1)
             # best_sent_idxs = best_sent_idxs.cuda()
             # ir1_loss = self.ir_loss(c_scores, best_sent_idxs)
+            if bsi is None:
+                _, topk_rouge_idx = torch.topk(c_rouge, self.n_ctx1_sents, dim=1)
+                best_start_idx = 0
+                best_end_idx = 0
+            else:
+                best_start_idx = []
+                best_end_idx = []
 
-            _, topk_rouge_idx = torch.topk(c_rouge, self.n_ctx1_sents, dim=1)
-            rest_rouge_idx = [[j for j in range(c_rouge.shape[1]) if j not in topk_rouge_idx[i]] for i in range(c_rouge.shape[0])]
-            
+                topk_rouge_idx = [bsi[i, :min(self.n_ctx1_sents, bslen[i]), 0] for i in range(q.shape[0])]
+
+                for i in range(len(topk_idx_ir1)):
+                    top_selected_idx = [k for k,j in enumerate(topk_rouge_idx[i]) if j in topk_idx_ir1[i]]
+                    if top_selected_idx == []:
+                        worst_idx = torch.argmin(bss[i], dim=0)
+                        topk_idx_ir1[i][-1] = bsi[i, worst_idx, 0]
+                        top_selected_idx.append(worst_idx)
+
+                    # TODO: Fix this                    
+                    best_span_idx = torch.argmax(bss[i, top_selected_idx], dim=0)
+                    best_span_idx = top_selected_idx[best_span_idx]                
+                    prev_chunk_idx = topk_idx_ir1[i, :torch.nonzero(topk_idx_ir1[i] == bsi[i, best_span_idx, 0]).view(-1)[0]]
+                    # print(best_span_idx, bsi[i, best_span_idx], bss[i, best_span_idx], topk_idx_ir1[i], prev_chunk_idx)
+
+                    # span = c[bsi[i, best_span_idx, 0], bsi[i, best_span_idx, 1]:bsi[i, best_span_idx, 2]+1, 0]
+                    # print(bsi[i, best_span_idx], span)
+                    # print([self.i2w[int(x)] for x in span])
+
+                    best_start_idx.append(bsi[i, best_span_idx, 1] + torch.sum(clen[prev_chunk_idx]))
+                    best_end_idx.append(bsi[i, best_span_idx, 2] + torch.sum(clen[prev_chunk_idx]))
+                
+                best_start_idx = torch.LongTensor(best_start_idx).to(q.device)
+                best_end_idx = torch.LongTensor(best_end_idx).to(q.device)                      
+
+            rest_rouge_idx = [[j for j in range(c.shape[0]) if j not in topk_rouge_idx[i]] for i in range(q.shape[0])]            
             best_score = [c_scores[i, topk_rouge_idx[i]] for i in range(len(topk_rouge_idx))]
             rest_score = [c_scores[i, rest_rouge_idx[i]] for i in range(len(rest_rouge_idx))]
 
-            for i in range(topk_rouge_idx.shape[0]):                   
+            for i in range(len(topk_rouge_idx)):                   
                 _rest_score = rest_score[i].view(1,-1)
-                _best_score = best_score[i].view(-1,1).expand(-1, _rest_score.shape[1])                                       
+                _best_score = best_score[i].view(-1,1).expand(-1, _rest_score.shape[1])
                 diff = F.relu(1 - (_best_score - _rest_score))
                 ir1_loss += torch.mean(diff)
-            ir1_loss /= topk_rouge_idx.shape[0]
-
-
-        _, topk_idx_ir1 = torch.topk(c_scores, self.n_ctx1_sents, 
-                                        dim=1, sorted=False)
+            ir1_loss /= len(topk_rouge_idx)
         
         ctx1 = [c[topk_idx_ir1[i]] for i in range(len(c_scores))]
-        ctx1 = torch.stack(ctx1, dim=0)
+        ctx1 = torch.stack(ctx1, dim=0)        
 
         ctx1_chars = [c_chars[topk_idx_ir1[i]] for i in range(len(c_scores))]
         ctx1_chars = torch.stack(ctx1_chars, dim=0)
 
         ctx_len1 = [clen[topk_idx_ir1[i]] for i in range(len(c_scores))]        
-        ctx_len1 = torch.stack(ctx_len1, dim=0)
+        ctx_len1 = torch.stack(ctx_len1, dim=0)        
         
         ir2_loss = 0
         for i in range(len(ctx1)):
             new_ctx = ctx1[i]
             new_ctx = [new_ctx[j, :ctx_len1[i,j]] for j in range(len(new_ctx))]
-            new_ctx = torch.cat(new_ctx, dim=0) 
+            new_ctx = torch.cat(new_ctx, dim=0)             
+            # print([self.i2w[int(j)] for j in new_ctx[best_start_idx[i]:best_end_idx[i]+1,0]])
 
             new_ctx_chars = ctx1_chars[i]
             new_ctx_chars = [new_ctx_chars[j, :ctx_len1[i,j]] for j in range(len(new_ctx_chars))]
-            new_ctx_chars = torch.cat(new_ctx_chars, dim=0) 
+            new_ctx_chars = torch.cat(new_ctx_chars, dim=0)             
 
             if self.use_ir2 and new_ctx.shape[0] // self.chunk_size > self.n_ctx2_sents:                
                 new_pwords = []
@@ -167,10 +199,18 @@ class EndToEndModel(nn.Module):
             ctx_chars[i,:len(sents)] = selected_sents_chars[i]
 
         ir2_loss /= q.shape[0]
-        return ctx, ctx_chars, ctx_len, string_sents, ir1_loss, ir2_loss
+        if self.ir_model1.training:
+            # for i in range(len(string_sents)):
+                # print(best_start_idx[i], best_end_idx[i])
+                # print(string_sents[i][best_start_idx[i]:best_end_idx[i]+1])
+                # print([self.i2w[int(j)] for j in ctx[i, best_start_idx[i]:best_end_idx[i]+1,0]])
+            return ctx, ctx_chars, ctx_len, string_sents, ir1_loss, ir2_loss, best_start_idx, best_end_idx
+        return ctx, ctx_chars, ctx_len, string_sents
 
-    def forward(self, q, q_chars, c, c_chars, c_rouge, avec1, avec2, qlen, clen, alen, p_words, a1, a2, c_batch_size=512):        
-        ctx, c_chars, ctx_len, string_sents, ir1_loss, ir2_loss = self.getSpans(q, c, c_chars, qlen, clen, p_words, c_rouge=c_rouge, a1=a1, a2=a2, c_batch_size=c_batch_size)
+    def forward(self, q, q_chars, c, c_chars, c_rouge, avec1, avec2, qlen, clen, alen, p_words, a1, a2, bsi=None, bss=None, bslen=None, c_batch_size=512):        
+        ctx, c_chars, ctx_len, string_sents, ir1_loss, ir2_loss, best_start_idx, best_end_idx = self.getSpans(q, c, c_chars, qlen, clen, p_words, 
+                                                                                c_rouge=c_rouge, a1=a1, a2=a2, bsi=bsi, bss=bss,
+                                                                                bslen=bslen, c_batch_size=c_batch_size)
 
         # max_word_len = 16
         # words2charIds = lambda W: [[self.c2i.get(w[i], self.c2i['<unk>']) if i < len(w) else self.c2i['<pad>'] for i in range(max_word_len)] for w in W]
@@ -183,7 +223,8 @@ class EndToEndModel(nn.Module):
         eidx=torch.zeros(q.shape[0]).to(q.device)
         loss1, sidx, eidx = self.rc_model(ctx[:,:,0], ctx[:,:,1], ctx[:,:,2], c_chars, ctx_len, 
                                                 q[:,:,0], q[:,:,1], q[:,:,2], q_chars, qlen, 
-                                                string_sents, avec1, alen, a1, a2)
+                                                string_sents, avec1, alen, a1, a2, best_start_idx, 
+                                                best_end_idx)
 
         # print (loss1)
         return loss1, ir1_loss, ir2_loss, sidx, eidx
@@ -203,7 +244,7 @@ class EndToEndModel(nn.Module):
         # return loss1+gen_loss
 
     def evaluate(self, q, q_chars, c, c_chars, qlen, clen, p_words, c_batch_size=512):
-        ctx, c_chars, ctx_len, string_sents, _, _ = self.getSpans(q, c, c_chars, qlen, clen, 
+        ctx, c_chars, ctx_len, string_sents = self.getSpans(q, c, c_chars, qlen, clen, 
                                                             p_words, a1=None, a2=None, c_batch_size=c_batch_size)
         sidx, eidx = self.rc_model.evaluate(ctx[:,:,0], ctx[:,:,1], ctx[:,:,2], c_chars, ctx_len, 
                                                 q[:,:,0], q[:,:,1], q[:,:,2], q_chars, qlen)

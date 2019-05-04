@@ -61,7 +61,8 @@ def add_arguments(parser):
     parser.add_argument('--n_chunks', type=int, default=3, help='number of chunks to select with the first IR model')  
     parser.add_argument('--n_spans', type=int, default=5, help='number of spans to select using the second IR model')  
     parser.add_argument('--chunk_len', type=int, default=100, help='number of spans to select using the second IR model')  
-    parser.add_argument('--span_len', type=int, default=15, help='number of spans to select using the second IR model')  
+    parser.add_argument('--span_len', type=int, default=15, help='number of spans to select using the second IR model')
+    parser.add_argument('--labeled_format', action='store_true', help='whether to store the results')
 
 
 
@@ -144,7 +145,7 @@ def train_full(args):
         training_data = pickle.load(f)
     with open(args.dev_file, 'rb') as f:
         dev_data = pickle.load(f)
-    w2i, tag2i, ner2i, c2i, common_vocab = build_fulltext_dicts(training_data, args.min_occur)
+    w2i, tag2i, ner2i, c2i, common_vocab = build_fulltext_dicts(training_data, args.min_occur, labeled_format=args.labeled_format)
     id2words = {}
     for k, v in common_vocab.items():
         id2words[v] = k
@@ -159,8 +160,8 @@ def train_full(args):
     c2i['<unk>'] = 1
 
     logger.info('Converting to index')
-    train = convert_fulltext(training_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=args.chunk_len, build_chunks=True)
-    dev = convert_fulltext(dev_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=args.chunk_len, build_chunks=True)
+    train = convert_fulltext(training_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=args.chunk_len, build_chunks= not args.labeled_format, labeled_format=args.labeled_format)
+    dev = convert_fulltext(dev_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=args.chunk_len, build_chunks= not args.labeled_format, labeled_format=args.labeled_format)
     train = FulltextDataset(train, args.train_batch_size)
     dev = FulltextDataset(dev, args.dev_batch_size)
     train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=1, num_workers = NUM_WORKERS, collate_fn=mCollateFn)
@@ -189,7 +190,8 @@ def train_full(args):
 
     ag_model = None # AnswerGenerator(input_size, args.hidden_size, args.num_layers, rc_model.word_embeddings, embeddings.shape[1], len(common_vocab)+4, embeddings.shape[0], args.emb_dropout, args.rnn_dropout)
     model = EndToEndModel(ir_model, 
-                            AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i)), 
+                            # AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i)), 
+                            KNRM(init_emb=embeddings),
                             rc_model, ag_model, w2i, c2i, use_ir2=args.use_ir2, 
                             n_ctx1_sents=args.n_chunks, n_ctx2_sents=args.n_spans,
                             span_size=args.span_len)
@@ -241,7 +243,7 @@ def train_full(args):
                 global_step += 1
                 local_step  += 1
                 #print (global_step)
-                q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, qlens, slens, avec1_len, alens, a1, a2, p_words = batch                
+                q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, qlens, slens, avec1_len, alens, a1, a2, p_words, bsi, bss, bslen = batch                
                 # print(q.dtype, passage.dtype, a.dtype, qlens.dtype, slens.dtype, alens.dtype)
                 # if global_step == 20:
                 #     pr.disable()
@@ -262,8 +264,14 @@ def train_full(args):
                     qlens = qlens.cuda()
                     slens = slens.cuda()
                     avec1_len = avec1_len.cuda()
-
-                rc_loss, ir1_loss, ir2_loss, sidx, eidx = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
+                    bsi = bsi.cuda()
+                    bss = bss.cuda()
+                    bslen = bslen.cuda()
+                if args.labeled_format:
+                    rc_loss, ir1_loss, ir2_loss, sidx, eidx = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
+                                                qlens, slens, avec1_len, p_words, a1, a2, bsi=bsi, bss=bss, bslen=bslen)
+                else:
+                    rc_loss, ir1_loss, ir2_loss, sidx, eidx = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
                                                 qlens, slens, avec1_len, p_words, a1, a2)
                 batch_loss = rc_loss+ir1_loss+ir2_loss                
                 optimizer.zero_grad()
@@ -301,7 +309,7 @@ def train_full(args):
             gen_rouge = 0.
             count = 0
             for batch in dev_loader:
-                q, q_chars, passage, passage_chars, _, avec1, avec2, qlens, slens, avec, alens, a1, a2, p_words = batch
+                q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, qlens, slens, avec1_len, alens, a1, a2, p_words, bsi, bss, bslen = batch
                 count += q.shape[0]
                 if use_cuda:
                     q = q.cuda()
@@ -310,6 +318,8 @@ def train_full(args):
                     passage_chars = passage_chars.cuda()
                     qlens = qlens.cuda()
                     slens = slens.cuda()
+
+
                 sidx, eidx, context = model.evaluate(q, q_chars, passage, passage_chars, qlens, slens, p_words)
                 # dev_loss += 0# batch_loss.cpu().item()
                 # print(context)

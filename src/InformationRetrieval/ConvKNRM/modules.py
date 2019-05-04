@@ -25,7 +25,7 @@ class GaussianKernel(object):
 class ConvKNRM(nn.Module):
 	"""docstring for ConvKNRM"""
 	def __init__(self, init_emb=None, emb_trainable=True, vocab_size=None, 
-					emb_dim=100, nfilters=128, max_ngram=3, xmatch_ngrams=False, 
+					emb_dim=100, nfilters=32, max_ngram=3, xmatch_ngrams=False, 
 					nkernels=11, sigma=0.1, exact_sigma=0.001, dropout=0.3):
 		super(ConvKNRM, self).__init__()
 		if init_emb is not None:
@@ -53,17 +53,6 @@ class ConvKNRM(nn.Module):
 				self.kernels.append(GaussianKernel(mu, sigma))
 
 		self.xmatch_ngrams = xmatch_ngrams
-
-		self.evidence_collector = nn.Sequential(
-			nn.Conv1d(emb_dim, emb_dim, 5, padding=2),			
-			nn.ReLU(),
-			nn.Dropout(dropout),
-			nn.Conv1d(emb_dim, emb_dim, 3, padding=1)
-			)	
-
-		self.interactive_aligner = InteractiveAligner(emb_dim)
-		self.self_aligner = SelfAligner(emb_dim)
-		self.summarizer = Summarizer(emb_dim)
 
 		self.linear = nn.Linear(nkernels * max_ngram**(1 + int(xmatch_ngrams)), 1, bias=False)
 		self.dropout = nn.Dropout(dropout)
