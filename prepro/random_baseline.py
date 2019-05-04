@@ -6,6 +6,11 @@ ps = PorterStemmer()
 from collections import Counter
 import tqdm
 import json
+from rouge import Rouge
+import nltk
+from nltk import ngrams
+stoplist = set(['the','a','.',',', '...', '..', '....', '.....', '......'])
+rouge = Rouge()
 
 k1 = 1.2
 k2 = 100
@@ -96,8 +101,41 @@ def add_scores(idx, all_scores, scores_map):
 			total += all_scores[k]
 	return total 
 
-def retrieve_chunks(data, stopwords, outname):
-	newdata = []
+def get_ngrams(passage, n):
+	ngrams_list = []
+	for i in range(0, n):
+		current = ngrams(passage, i+1)
+		for gram in current:
+			ngrams_list.append(' '.join(gram))
+	return ngrams_list
+
+def compute_rouge(candidates, context_tokens, answers):
+	scores = {}
+	for span in candidates:
+		if span in stoplist:
+			continue
+		try:
+			scores[span] = max([rouge.get_scores(span, ans)[0]['rouge-l']['f'] for ans in answers])
+		except:
+			print ('what the fuck is this', span)
+	sorted_scores = sorted(scores.items(), key=operator.itemgetter(1), reverse=True)
+	best_candidate = sorted_scores[0][0].split(' ')
+	best_rouge = sorted_scores[0][1]
+	ans_len = len(best_candidate)
+	
+	start_index = -1
+	end_index = -1
+	for i in range(0, len(context_tokens) - ans_len + 1):
+		if context_tokens[i: i+ans_len] == best_candidate:
+			start_index = i
+			end_index = i+ans_len-1
+	if start_index == -1 or end_index == -1:
+		print ('this should not happen')
+	return best_candidate, start_index, end_index, best_rouge
+
+def retrieve_chunks(data, stopwords, outname, use_answer=True, num_chunks=10, target=None):
+	newdata = {}
+	document_count = 0
 	for cid in tqdm.tqdm(data):
 		context = data[cid]['full_text']
 		if len(context) == 0:
@@ -123,19 +161,28 @@ def retrieve_chunks(data, stopwords, outname):
 		for k, v in dlt.items():
 			avg += v
 		avg /= float(len(dlt))
+		newdata[cid] = {}
+		newdata[cid]['full_text'] = passage_context
+		newdata[cid]['qaps'] = []
 		for q in data[cid]['qaps']:
-			passage_scores = []
-			score_dict = {}
-			for (paraI, sentI, score) in q["full_text_scores"]:
-				score_dict[(paraI, sentI)] = score
-			for i, para in enumerate(context):
-				for j,sent in enumerate(para):
-					if (i, j) in score_dict:
-						passage_scores.append(score_dict[(i, j)])
-					else:
-						passage_scores.append(0.0)
+			# passage_scores = []
+			# score_dict = {}
+			# for (paraI, sentI, score) in q["full_text_scores"]:
+			# 	score_dict[(paraI, sentI)] = score
+			# for i, para in enumerate(context):
+			# 	for j,sent in enumerate(para):
+			# 		if (i, j) in score_dict:
+			# 			passage_scores.append(score_dict[(i, j)])
+			# 		else:
+			# 			passage_scores.append(0.0)
 			query_result = {}
-			qwords = q['question_tokens']
+			if use_answer:
+				if len(q['answer1_tokens']) > len(q['answer2_tokens']):
+					qwords = q['answer1_tokens']
+				else:
+					qwords = q['answer2_tokens']
+			else:
+				qwords = q['question_tokens']
 			for w in qwords:
 				w = ps.stem(w)
 				if w in stopwords:
@@ -150,43 +197,34 @@ def retrieve_chunks(data, stopwords, outname):
 						else:
 							query_result[docid] = score
 			sorted_score = sorted(query_result.items(), key=operator.itemgetter(1), reverse=True)
-			new_context = []
-			context_scores = []
-			BM25_scores = []
-			for idx, s in sorted_score[0:10]:
-				new_context.append(passage_context[idx])
-				context_scores.append(add_scores(idx, passage_scores, scores_map))
-				BM25_scores.append(s)
-			# print (context_scores)
-			# print (BM25_scores)
-			# exit(0)
-			if len(new_context) == 0:
+			passage_labels = []
+			max_span_len = max(len(q['answer1_tokens']), len(q['answer2_tokens']))
+			answer1 = q['answers'][0].lower()
+			answer2 = q['answers'][1].lower()
+			if answer1 == answer2:
+				answers = [answer1]
+			else:
+				answers = [answer1, answer2]
+			for idx, s in sorted_score[0:num_chunks]:
+				candidates = get_ngrams(passage_context[idx][0], max_span_len)
+				best_span, start_idx, end_idx, best_rouge = compute_rouge(candidates, passage_context[idx][0], answers)
+				passage_labels.append((idx, best_span, start_idx, end_idx, best_rouge, 1))
+				
+			if len(passage_labels) == 0:
 				print ('none found')
-				new_context = passage_context[0:10]
-				context_scores = [add_scores(i, passage_scores, scores_map) for i in range(10)]
-				BM25_scores = [0.0 for _ in range(len(new_context))]
-			sample = {}
-			sample['id'] = q['_id']
-			qo = {}
-			for k, v in q.items():
-				if k == 'full_text_scores':
-					continue
-				qo[k] = v
-			sample['qaps'] = qo
-			# sample['answers'] = q['answers']
-			# sample['question_tokens'] = q['question_tokens']
-			# sample['question_pos'] = q['question_pos']
-			# sample['question_ner'] = q['question_ner']
-			# sample['answer1_tokens'] = q['answer1_tokens']
-			# sample['answer2_tokens'] = q['answer2_tokens']
-			sample['context'] = new_context
-			sample['scores'] = context_scores
-			sample['BM25_scores'] = BM25_scores
-			newdata.append(sample)
+				new_context = passage_context[0:num_chunks]
+				for i, con in enumerate(new_context):
+					candidates = get_ngrams(con[0], max_span_len)
+					best_span, start_idx, end_idx, best_rouge = compute_rouge(candidates, con[0], answers)
+					passage_labels.append((i, best_span, start_idx, end_idx, best_rouge, 0))
+			q['passage_labels'] = passage_labels
+			del q["full_text_scores"]
+			newdata[cid]['qaps'].append(q)
+		document_count += 1
+		if target == document_count:
+			break	
 	with open(outname, 'wb') as f:
 		pickle.dump(newdata, f)
-
-
 
 def retrieve(data, stopwords, outname, use_answer=False, num_sent=50):
 	newdata = []
@@ -300,8 +338,8 @@ if __name__ == '__main__':
 	with open('narrativeqa_dev_fulltext_wostop.pickle', 'rb') as f:
 		dev_data = pickle.load(f)
 	#retrieve(train_data, stopwords, 'BM25_train_followpaper.pickle', use_answer=True, num_sent=50)
-	retrieve(dev_data, stopwords, 'whatever.pickle', use_answer=False, num_sent=500)
-	#retrieve_chunks(train_data, stopwords, 'BM25_train_chunks.pickle')
-	#retrieve_chunks(dev_data, stopwords, 'BM25_dev_chunks.pickle')
+	#retrieve(dev_data, stopwords, 'whatever.pickle', use_answer=False, num_sent=500)
+	retrieve_chunks(train_data, stopwords, 'e2e_train_subset.pickle', target=100)
+	#retrieve_chunks(dev_data, stopwords, 'e2e_dev_subset.pickle')
 
 
