@@ -39,11 +39,11 @@ class EndToEndModel(nn.Module):
         string_sents = []                    
 
         c_scores = self.ir_model1.forward_singleContext(q, c, qlen, clen,
-                                                    batch_size=c_batch_size)
-        c_scores = torch.log(F.gumbel_softmax(c_scores))
+                                                    batch_size=c_batch_size)        
         if not torch.isfinite(c_scores).all():
             print('bad c_scores')
-            print(c_scores)
+            print(c_scores)        
+        c_scores = torch.log(F.gumbel_softmax(c_scores))
 
         ir1_loss = 0
 
