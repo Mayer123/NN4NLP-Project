@@ -18,7 +18,7 @@ class GaussianKernel(object):
 		self.std = std
 
 	def __call__(self, x):
-		sim = torch.exp(-0.5 * (x-self.mean)**2 / self.std**2)		
+		sim = torch.exp(-0.5 * (x-self.mean)**2 / self.std**2)
 		return sim
 		
 
@@ -46,7 +46,8 @@ class KNRM(nn.Module):
 		self.linear = nn.Linear(nkernels, 1, bias=False)
 		self.dropout = nn.Dropout(dropout)
 	def embed(self, x):
-		x_emb = self.dropout(self.emb(x[:,:,0]))
+		x_emb = self.emb(x[:,:,0])
+		x_emb = x_emb / torch.norm(x_emb, dim=2, keepdim=True)
 		return x_emb
 
 	def score(self, q_emb, d_emb, qlen, dlen):
@@ -55,9 +56,20 @@ class KNRM(nn.Module):
 
 		kernel_counts = []
 		for K in self.kernels:
-			probs = K(sim)					
+			probs = K(sim)
 			qt_match_count = torch.sum(probs, dim=2)					
 			total_count = torch.sum(torch.log1p(qt_match_count), dim=1)
+			
+			if not torch.isfinite(total_count).all():
+				print('bad total_count')
+				print(total_count)
+				print(torch.min(probs))
+				print(torch.min(qt_match_count))
+				print(torch.min(sim))
+				print(torch.min(q_emb))
+				print(torch.min(d_emb))
+				return
+
 			kernel_counts.append(total_count)
 		kernel_counts = torch.stack(kernel_counts, dim=1)
 
@@ -65,9 +77,15 @@ class KNRM(nn.Module):
 		return score
 
 	def forward(self, q, d, qlen, dlen):
+		if not torch.isfinite(q).all():
+			print('bad q')
+			print(q)
+			print(d)
+			return
 		q_emb = self.embed(q)
 		d_emb = self.embed(d)
-		score = self.score(q_emb, d_emb, qlen, dlen)
+		score = self.score(q_emb, d_emb, qlen, dlen)		
+		score += 1e-10
 		return score
 
 	def getSentScores(self, q, c, qlen, clen, batch_size):		
