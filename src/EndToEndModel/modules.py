@@ -10,7 +10,8 @@ from ReadingComprehension.IterativeReattentionAligner.CSMrouge import RRRouge
 class EndToEndModel(nn.Module):
     """docstring for End2EndModel"""
     def __init__(self, ir_model1, ir_model2, rc_model, ag_model, w2i, c2i, 
-                    n_ctx1_sents=6, n_ctx2_sents=5, span_size=15, use_ir2=False):
+                    n_ctx1_sents=6, n_ctx2_sents=5, span_size=15, use_ir2=False,
+                    ir_pretrain=True):
         super(EndToEndModel, self).__init__()
         self.ir_model1 = ir_model1
         self.ir_model2 = ir_model2
@@ -24,6 +25,7 @@ class EndToEndModel(nn.Module):
         self.ir_loss = nn.NLLLoss()
         self.rrrouge = RRRouge()
         self.use_ir2 = use_ir2
+        self.ir_pretrain = ir_pretrain
 
     def idx2words(self, idxs):
         return [self.i2w[i.data] for i in idxs]
@@ -192,11 +194,14 @@ class EndToEndModel(nn.Module):
         ctx_len = torch.tensor([len(s) for s in selected_sents]).long().to(c.device)
         max_ctx_len = max(ctx_len)
 
-        ctx = torch.zeros(len(selected_sents), max_ctx_len, c.shape[2]).long().to(c.device)
-        ctx_chars = torch.zeros(len(selected_sents_chars), max_ctx_len, c_chars.shape[2]).long().to(c.device)     
-        for (i, sents) in enumerate(selected_sents):
-            ctx[i,:len(sents)] = sents
-            ctx_chars[i,:len(sents)] = selected_sents_chars[i]
+        ctx = nn.utils.rnn.pad_sequence(selected_sents, batch_first=True)
+        ctx_chars = nn.utils.rnn.pad_sequence(selected_sents_chars, batch_first=True)
+
+        # ctx = torch.zeros(len(selected_sents), max_ctx_len, c.shape[2]).long().to(c.device)
+        # ctx_chars = torch.zeros(len(selected_sents_chars), max_ctx_len, c_chars.shape[2]).long().to(c.device)     
+        # for (i, sents) in enumerate(selected_sents):
+        #     ctx[i,:len(sents)] = sents
+        #     ctx_chars[i,:len(sents)] = selected_sents_chars[i]
 
         ir2_loss /= q.shape[0]
         if self.ir_model1.training:
@@ -218,9 +223,9 @@ class EndToEndModel(nn.Module):
         # c_chars = torch.LongTensor(c_chars).to(c.device)
         # print(c_chars.shape)
 
-        loss1=0
-        sidx=torch.zeros(q.shape[0]).to(q.device)
-        eidx=torch.zeros(q.shape[0]).to(q.device)
+        if self.ir_pretrain:
+            return ir1_loss, ir1_loss, ir2_loss, sidx, eidx
+        
         loss1, sidx, eidx = self.rc_model(ctx[:,:,0], ctx[:,:,1], ctx[:,:,2], c_chars, ctx_len, 
                                                 q[:,:,0], q[:,:,1], q[:,:,2], q_chars, qlen, 
                                                 string_sents, avec1, alen, a1, a2, best_start_idx, 

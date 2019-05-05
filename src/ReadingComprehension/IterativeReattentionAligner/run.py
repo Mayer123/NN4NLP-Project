@@ -63,6 +63,7 @@ def add_arguments(parser):
     parser.add_argument('--chunk_len', type=int, default=100, help='number of spans to select using the second IR model')  
     parser.add_argument('--span_len', type=int, default=15, help='number of spans to select using the second IR model')
     parser.add_argument('--labeled_format', action='store_true', help='whether to store the results')
+    parser.add_argument('--ir_model_pretrain_epochs', type=int, default=0, help='number of spans to select using the second IR model')
 
 
 
@@ -182,14 +183,17 @@ def train_full(args):
     #                         args.pos_emb_size, embeddings, len(tag2i)+2, len(w2i)+4,
     #                         args.emb_dropout, args.rnn_dropout)
     # ir_model = AttentionRM(rc_model.word_embeddings, rc_model.pos_emb, pos_vocab_size=len(tag2i))
-    if args.load_ir_model == '':
-        ir_model = KNRM(init_emb=embeddings)
-        # ir_model = BOWRM(init_emb=embeddings)
+    if args.load_model != '':
+        model = torch.load(args.load_model)
     else:
-        ir_model = torch.load(args.load_ir_model)
+        if args.load_ir_model == '':
+            ir_model = KNRM(init_emb=embeddings)
+            # ir_model = BOWRM(init_emb=embeddings)
+        else:
+            ir_model = torch.load(args.load_ir_model)
 
-    ag_model = None # AnswerGenerator(input_size, args.hidden_size, args.num_layers, rc_model.word_embeddings, embeddings.shape[1], len(common_vocab)+4, embeddings.shape[0], args.emb_dropout, args.rnn_dropout)
-    model = EndToEndModel(ir_model, 
+        ag_model = None # AnswerGenerator(input_size, args.hidden_size, args.num_layers, rc_model.word_embeddings, embeddings.shape[1], len(common_vocab)+4, embeddings.shape[0], args.emb_dropout, args.rnn_dropout)
+        model = EndToEndModel(ir_model, 
                             # AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i)), 
                             KNRM(init_emb=embeddings),
                             rc_model, ag_model, w2i, c2i, use_ir2=args.use_ir2, 
@@ -225,7 +229,8 @@ def train_full(args):
         if not args.eval_only:            
             if ITER >= args.RL_loss_after:
                 model.use_RLLoss = True
-
+            if ITER >= args.ir_model_pretrain_epochs:
+                model.ir_pretrain = False
             model.train()
             if args.use_ir2 and args.alt_ir_training:
                 if ITER % 10 < 5:
@@ -284,7 +289,7 @@ def train_full(args):
                 torch.nn.utils.clip_grad_norm_(model.rc_model.parameters(),1)
                 optimizer.step()
 
-                reset_embeddings(rc_model.word_embeddings, embeddings, trained_idx)  
+                reset_embeddings(model.rc_model.word_embeddings, embeddings, trained_idx)  
                 t.set_postfix(loss=train_loss/local_step, rc_loss=total_rc_loss/local_step, 
                                 ir1_loss=total_ir1_loss/local_step, ir2_loss=total_ir2_loss/local_step)          
                 # break
