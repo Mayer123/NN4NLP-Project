@@ -21,7 +21,7 @@ class EndToEndModel(nn.Module):
         self.chunk_size = span_size
         self.i2w = {v:k for k,v in w2i.items()}
         self.c2i = c2i
-        self.ir_loss = nn.NLLLoss()
+        self.ir_loss = nn.BCEWithLogitsLoss()
         self.rrrouge = RRRouge()
         self.use_ir2 = use_ir2
 
@@ -43,7 +43,7 @@ class EndToEndModel(nn.Module):
         if not torch.isfinite(c_scores).all():
             print('bad c_scores')
             print(c_scores)        
-        c_scores = torch.log(F.gumbel_softmax(c_scores))
+        #c_scores = torch.log(F.gumbel_softmax(c_scores))
 
         ir1_loss = 0
 
@@ -86,16 +86,20 @@ class EndToEndModel(nn.Module):
                 best_start_idx = torch.LongTensor(best_start_idx).to(q.device)
                 best_end_idx = torch.LongTensor(best_end_idx).to(q.device)                      
 
-            rest_rouge_idx = [[j for j in range(c.shape[0]) if j not in topk_rouge_idx[i]] for i in range(q.shape[0])]            
-            best_score = [c_scores[i, topk_rouge_idx[i]] for i in range(len(topk_rouge_idx))]
-            rest_score = [c_scores[i, rest_rouge_idx[i]] for i in range(len(rest_rouge_idx))]
+            #rest_rouge_idx = [[j for j in range(c.shape[0]) if j not in topk_rouge_idx[i]] for i in range(q.shape[0])]            
+            #best_score = [c_scores[i, topk_rouge_idx[i]] for i in range(len(topk_rouge_idx))]
+            #rest_score = [c_scores[i, rest_rouge_idx[i]] for i in range(len(rest_rouge_idx))]
 
-            for i in range(len(topk_rouge_idx)):                   
-                _rest_score = rest_score[i].view(1,-1)
-                _best_score = best_score[i].view(-1,1).expand(-1, _rest_score.shape[1])
-                diff = F.relu(1 - (_best_score - _rest_score))
-                ir1_loss += torch.mean(diff)
-            ir1_loss /= len(topk_rouge_idx)
+            # for i in range(len(topk_rouge_idx)):                   
+            #     _rest_score = rest_score[i].view(1,-1)
+            #     _best_score = best_score[i].view(-1,1).expand(-1, _rest_score.shape[1])
+            #     diff = F.relu(1 - (_best_score - _rest_score))
+            #     ir1_loss += torch.mean(diff)
+            # ir1_loss /= len(topk_rouge_idx)
+            ir_model_target = torch.zeros(c_scores.shape).to(c_scores.device)
+            for i in range(len(topk_rouge_idx)):
+                ir_model_target[i][topk_rouge_idx[i]] = 1
+            ir1_loss = self.ir_loss(c_scores, ir_model_target)
         
         ctx1 = [c[topk_idx_ir1[i]] for i in range(len(c_scores))]
         ctx1 = torch.stack(ctx1, dim=0)        

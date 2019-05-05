@@ -183,8 +183,8 @@ def train_full(args):
     #                         args.emb_dropout, args.rnn_dropout)
     # ir_model = AttentionRM(rc_model.word_embeddings, rc_model.pos_emb, pos_vocab_size=len(tag2i))
     if args.load_ir_model == '':
-        ir_model = KNRM(init_emb=embeddings)
-        # ir_model = BOWRM(init_emb=embeddings)
+        #ir_model = KNRM(init_emb=embeddings)
+        ir_model = BOWRM(init_emb=embeddings)
     else:
         ir_model = torch.load(args.load_ir_model)
 
