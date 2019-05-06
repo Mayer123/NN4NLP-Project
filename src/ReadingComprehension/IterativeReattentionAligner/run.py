@@ -58,6 +58,7 @@ def add_arguments(parser):
     parser.add_argument('--eval_only', action='store_true', help='whether to store the results')
     parser.add_argument('--use_ir2', action='store_true', help='whether to store the results')
     parser.add_argument('--alt_ir_training', action='store_true', help='whether to store the results')
+    parser.add_argument('--ir_model_type', type=str, default="knrm", help='whether to load pre-trained model')
     parser.add_argument('--n_chunks', type=int, default=5, help='number of chunks to select with the first IR model')  
     parser.add_argument('--n_spans', type=int, default=5, help='number of spans to select using the second IR model')  
     parser.add_argument('--chunk_len', type=int, default=100, help='number of spans to select using the second IR model')  
@@ -133,6 +134,21 @@ def generate_scores(rouge, generate_output, id2words, a1, a2, show=False):
             print (a2[i])
     return rouge_score
 
+class MultipleOptimizer(object):
+    def __init__(self, *op):
+        self.optimizers = op
+
+    def zero_grad(self):
+        for op in self.optimizers:
+            op.zero_grad()
+
+    def step(self):
+        for op in self.optimizers:
+            op.step()
+
+
+        
+
 def train_full(args):
     global logger
     rouge = Rouge()
@@ -169,8 +185,8 @@ def train_full(args):
     dev = convert_fulltext(dev_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=args.chunk_len, build_chunks= not args.labeled_format, labeled_format=args.labeled_format)
     train = FulltextDataset(train, args.train_batch_size)
     dev = FulltextDataset(dev, args.dev_batch_size)
-    train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=1, num_workers = NUM_WORKERS, collate_fn=mCollateFn)
-    dev_loader = torch.utils.data.DataLoader(dev, batch_size=1, num_workers = NUM_WORKERS, collate_fn=mCollateFn, shuffle=False)
+    train_loader = torch.utils.data.DataLoader(train, shuffle=True, batch_size=1, num_workers = NUM_WORKERS, collate_fn=mCollateFn2)
+    dev_loader = torch.utils.data.DataLoader(dev, batch_size=1, num_workers = NUM_WORKERS, collate_fn=mCollateFn2, shuffle=False)
     logger.info('Generating embeddings')
     embeddings, trained_idx = generate_embeddings(args.embedding_file, w2i)
     embeddings = torch.from_numpy(embeddings).float()
@@ -191,12 +207,21 @@ def train_full(args):
         model = torch.load(args.load_model)
     else:
         if args.load_ir_model == '':
-            # ir_model = KNRM(init_emb=embeddings)
-            ir_model = BOWRM(init_emb=embeddings, chunk_size=5)
+            if args.ir_model_type == 'knrm':
+                ir_model = KNRM(init_emb=embeddings)
+            elif args.ir_model_type == 'bow':
+                ir_model = BOWRM(init_emb=embeddings)#, chunk_size=15)
+            elif args.ir_model_type == 'chunked_bow':
+                ir_model = BOWRM(init_emb=embeddings, chunk_size=15)
+            elif args.ir_model_type == 'conv_knrm':
+                ir_model = ConvKNRM(init_emb=embeddings)
+            elif args.ir_model_type == 'attrm':
+                ir_model = AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i))
         else:
             ir_model = torch.load(args.load_ir_model)
 
         ag_model = None # AnswerGenerator(input_size, args.hidden_size, args.num_layers, rc_model.word_embeddings, embeddings.shape[1], len(common_vocab)+4, embeddings.shape[0], args.emb_dropout, args.rnn_dropout)
+        print(ir_model)
         model = EndToEndModel(ir_model, 
                             # AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i)), 
                             KNRM(init_emb=embeddings),
@@ -204,11 +229,14 @@ def train_full(args):
                             n_ctx1_sents=args.n_chunks, n_ctx2_sents=args.n_spans,
                             span_size=args.span_len)
 
-    optimizer = torch.optim.Adam([{'params':model.ir_model1.parameters(), 'lr':1e-3},
-                                  {'params':model.ir_model2.parameters(), 'lr':1e-3},
-                                  {'params':model.rc_model.parameters(), 'lr':0.0008}], 
+    ir_optimizer = torch.optim.Adam([{'params':model.ir_model1.parameters(), 'lr':2e-3},
+                                  {'params':model.ir_model2.parameters(), 'lr':1e-3}], 
                                   lr=1e-3, weight_decay=0.0001)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', 
+    rc_optimizer = torch.optim.Adam(model.rc_model.parameters(), lr=0.0008, weight_decay=0.0001)
+    optimizer = MultipleOptimizer(ir_optimizer, rc_optimizer)
+
+    ir_scheduler = torch.optim.lr_scheduler.MultiStepLR(ir_optimizer, [1,3,9,15], gamma=0.5)
+    rc_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(rc_optimizer, 'max', 
                                                             factor=0.5, patience=1,
                                                             verbose=True)
     if use_cuda:
@@ -226,13 +254,17 @@ def train_full(args):
     pr = cProfile.Profile()
     for ITER in range(args.epochs):
         train_loss = 0.0
+        train_rouge1 = 0.0
+        train_rouge2 = 0.0
+        num_sample = 0.0
+        train_loss = 0.0
         total_rc_loss = 0.0
         total_ir1_loss = 0.0
         total_ir2_loss = 0.0
         start_time = time.time()
 
         if not args.eval_only:
-            if ITER >= args.RL_loss_after:
+            if ITER >= args.ir_model_pretrain_epochs + args.RL_loss_after:
                 model.rc_model.use_RLLoss = True
             
             if ITER < args.ir_model_pretrain_epochs:
@@ -286,9 +318,9 @@ def train_full(args):
                     bsi = bsi.cuda()
                     bss = bss.cuda()
                     bslen = bslen.cuda()
+                
                 if args.labeled_format:
-
-                    rc_loss, ir1_loss, ir2_loss, miss_rate, sidx, eidx = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
+                    rc_loss, ir1_loss, ir2_loss, miss_rate, sidx, eidx, context = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
                                                 qlens, slens, avec1_len, p_words, a1, a2, bsi=bsi, bss=bss, bslen=bslen)
                 else:
                     rc_loss, ir1_loss, ir2_loss, sidx, eidx, context = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
@@ -296,9 +328,10 @@ def train_full(args):
                 batch_loss = rc_loss+ir1_loss+ir2_loss                
                 optimizer.zero_grad()
                 batch_loss.backward()
-                batch_score = compute_scores(rouge, rrrouge, sidx, eidx, context, a1, a2)
-                train_rouge1 += batch_score[0]
-                train_rouge2 += batch_score[3]
+                # if not model.ir_pretrain:
+                #     batch_score = compute_scores(rouge, rrrouge, sidx, eidx, context, a1, a2)
+                #     train_rouge1 += batch_score[0]
+                #     train_rouge2 += batch_score[3]
                 num_sample += q.shape[0]
                 train_loss += float(batch_loss)
                 total_rc_loss += float(rc_loss)
@@ -365,8 +398,9 @@ def train_full(args):
             avg_bleu4 = bleu4_scores / count
             another_rouge_avg = another_rouge / count
             logger.info("iter %r: dev loss %.4f dev average rouge score %.4f, another rouge %.4f, bleu1 score %.4f, bleu4 score %.4f, time=%.2fs" % (ITER, dev_loss/len(dev_loader), avg_rouge, another_rouge_avg, avg_bleu1, avg_bleu4, time.time() - start_time))
-            scheduler.step(another_rouge_avg)
-            if avg_rouge > best:
+            rc_scheduler.step(another_rouge_avg)
+            ir_scheduler.step()
+            if avg_rouge >= best:
                 best = avg_rouge
                 if args.save_results:
                     torch.save(model, args.model_name)
