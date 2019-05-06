@@ -233,7 +233,7 @@ class EndToEndModel(nn.Module):
         # print(c_chars.shape)
 
         if self.ir_pretrain:
-            return ir1_loss, ir1_loss, ir2_loss, sidx, eidx
+            return ir1_loss, ir1_loss, ir2_loss, miss_rate, None, None
         
         loss1, sidx, eidx = self.rc_model(ctx[:,:,0], ctx[:,:,1], ctx[:,:,2], c_chars, ctx_len, 
                                                 q[:,:,0], q[:,:,1], q[:,:,2], q_chars, qlen, 
@@ -261,6 +261,10 @@ class EndToEndModel(nn.Module):
         ctx, c_chars, ctx_len, string_sents = self.getSpans(q, c, c_chars, qlen, clen, 
                                                             p_words, a1=None, a2=None, bsi=bsi, bss=bss,
                                                             bslen=bslen, c_batch_size=c_batch_size)
+
+        if self.ir_pretrain:
+            return None, None, string_sents
+
         sidx, eidx = self.rc_model.evaluate(ctx[:,:,0], ctx[:,:,1], ctx[:,:,2], c_chars, ctx_len, 
                                                 q[:,:,0], q[:,:,1], q[:,:,2], q_chars, qlen)
         # raw_span = []

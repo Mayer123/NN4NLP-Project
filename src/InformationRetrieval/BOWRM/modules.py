@@ -13,7 +13,7 @@ from utils.utils import *
 class BOWRM(nn.Module):
 	"""docstring for ConvKNRM"""
 	def __init__(self, init_emb=None, emb_trainable=True, vocab_size=None, 
-					emb_dim=100, dropout=0.3):
+					emb_dim=100, dropout=0.3, chunk_size=-1):
 		super(BOWRM, self).__init__()
 		if init_emb is not None:
 			self.emb = nn.Embedding.from_pretrained(init_emb, 
@@ -24,6 +24,7 @@ class BOWRM(nn.Module):
 		self.proj = nn.Linear(2*emb_dim, 2*emb_dim, bias=False)
 		self.linear = nn.Linear(2*emb_dim, 1, bias=False)
 		self.dropout = nn.Dropout(dropout)
+		self.chunk_size = chunk_size
 
 	def embed(self, x):
 		x_emb = self.emb(x[:,:,0])
@@ -40,7 +41,25 @@ class BOWRM(nn.Module):
 	def forward(self, q, d, qlen, dlen):
 		q_emb = self.embed(q)
 		d_emb = self.embed(d)
-		score = self.score(q_emb, d_emb, qlen, dlen)
+
+		if self.chunk_size > 0:
+			batch_size = q_emb.shape[0]
+
+			clip_idx = q_emb.shape[1] % self.chunk_size
+			if clip_idx > 0:
+				q_emb = q_emb[:, :-clip_idx]
+			q_emb = q_emb.view(-1, self.chunk_size, q_emb.shape[2])
+
+			clip_idx = d_emb.shape[1] % self.chunk_size
+			if clip_idx > 0:
+				d_emb = d_emb[:, :-clip_idx]
+			d_emb = d_emb.view(-1, self.chunk_size, d_emb.shape[2])
+
+			score = self.score(q_emb, d_emb, None, None)
+			score = score.view(batch_size,-1)
+			score = torch.max(score, dim=1)
+		else:
+			score = self.score(q_emb, d_emb, qlen, dlen)
 		return score
 
 	def getSentScores(self, q, c, qlen, clen, batch_size):		
@@ -79,6 +98,7 @@ class BOWRM(nn.Module):
 
 		scores = torch.stack(scores, dim=0)
 		return scores
+		
 
 if __name__ == '__main__':
 	q = torch.LongTensor(torch.randint(10, size=(2,10,2)).long())

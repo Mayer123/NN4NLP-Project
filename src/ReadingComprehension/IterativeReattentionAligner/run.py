@@ -188,8 +188,8 @@ def train_full(args):
         model = torch.load(args.load_model)
     else:
         if args.load_ir_model == '':
-            ir_model = KNRM(init_emb=embeddings)
-            # ir_model = BOWRM(init_emb=embeddings)
+            # ir_model = KNRM(init_emb=embeddings)
+            ir_model = BOWRM(init_emb=embeddings, chunk_size=5)
         else:
             ir_model = torch.load(args.load_ir_model)
 
@@ -341,15 +341,16 @@ def train_full(args):
                 else:
                     sidx, eidx, context = model.evaluate(q, q_chars, passage, passage_chars, qlens, slens, p_words,bsi=None, bss=None,
                                                                                 bslen=None)
-                # dev_loss += 0# batch_loss.cpu().item()
-                # print(context)
+                if not model.ir_pretrain:                    
+                    # dev_loss += 0# batch_loss.cpu().item()
+                    # print(context)
 
-                batch_score = compute_scores(rouge, rrrouge, sidx, eidx, context, a1, a2)
-                # gen_rouge += generate_scores(rouge, generate_output.cpu().numpy(), id2words, a1, a2)
-                rouge_scores += batch_score[0]
-                bleu1_scores += batch_score[1]
-                bleu4_scores += batch_score[2]
-                another_rouge += batch_score[3]
+                    batch_score = compute_scores(rouge, rrrouge, sidx, eidx, context, a1, a2)
+                    # gen_rouge += generate_scores(rouge, generate_output.cpu().numpy(), id2words, a1, a2)
+                    rouge_scores += batch_score[0]
+                    bleu1_scores += batch_score[1]
+                    bleu4_scores += batch_score[2]
+                    another_rouge += batch_score[3]
             avg_rouge = rouge_scores / count
             avg_bleu1 = bleu1_scores / count
             avg_bleu4 = bleu4_scores / count
