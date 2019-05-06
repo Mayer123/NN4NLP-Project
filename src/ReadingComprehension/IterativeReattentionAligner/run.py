@@ -63,6 +63,8 @@ def add_arguments(parser):
     parser.add_argument('--chunk_len', type=int, default=100, help='number of spans to select using the second IR model')  
     parser.add_argument('--span_len', type=int, default=15, help='number of spans to select using the second IR model')
     parser.add_argument('--labeled_format', action='store_true', help='whether to store the results')
+    parser.add_argument('--ir_model_pretrain_epochs', type=int, default=0, help='number of spans to select using the second IR model')
+    parser.add_argument('--rc_model_pretrain_epochs', type=int, default=0, help='number of spans to select using the second IR model')
 
 
 
@@ -185,14 +187,17 @@ def train_full(args):
     #                         args.pos_emb_size, embeddings, len(tag2i)+2, len(w2i)+4,
     #                         args.emb_dropout, args.rnn_dropout)
     # ir_model = AttentionRM(rc_model.word_embeddings, rc_model.pos_emb, pos_vocab_size=len(tag2i))
-    if args.load_ir_model == '':
-        ir_model = KNRM(init_emb=embeddings)
-        #ir_model = BOWRM(init_emb=embeddings)
+    if args.load_model != '':
+        model = torch.load(args.load_model)
     else:
-        ir_model = torch.load(args.load_ir_model)
+        if args.load_ir_model == '':
+            # ir_model = KNRM(init_emb=embeddings)
+            ir_model = BOWRM(init_emb=embeddings, chunk_size=5)
+        else:
+            ir_model = torch.load(args.load_ir_model)
 
-    ag_model = None # AnswerGenerator(input_size, args.hidden_size, args.num_layers, rc_model.word_embeddings, embeddings.shape[1], len(common_vocab)+4, embeddings.shape[0], args.emb_dropout, args.rnn_dropout)
-    model = EndToEndModel(ir_model, 
+        ag_model = None # AnswerGenerator(input_size, args.hidden_size, args.num_layers, rc_model.word_embeddings, embeddings.shape[1], len(common_vocab)+4, embeddings.shape[0], args.emb_dropout, args.rnn_dropout)
+        model = EndToEndModel(ir_model, 
                             # AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i)), 
                             KNRM(init_emb=embeddings),
                             rc_model, ag_model, w2i, c2i, use_ir2=args.use_ir2, 
@@ -225,14 +230,21 @@ def train_full(args):
         total_ir1_loss = 0.0
         total_ir2_loss = 0.0
         start_time = time.time()
-        train_rouge1 = 0.0
-        train_rouge2 = 0.0
-        num_sample = 0
-        print (ITER,args.RL_loss_after)
-        if not args.eval_only:            
+
+        if not args.eval_only:
             if ITER >= args.RL_loss_after:
-                model.use_RLLoss = True
                 model.rc_model.use_RLLoss = True
+            
+            if ITER < args.ir_model_pretrain_epochs:
+                model.ir_pretrain = True
+            else:
+                model.ir_pretrain = False
+
+            if ITER < args.rc_model_pretrain_epochs:
+                model.rc_pretrain = True
+            else:
+                model.rc_pretrain = False            
+
             model.train()
             if args.use_ir2 and args.alt_ir_training:
                 if ITER % 10 < 5:
@@ -275,7 +287,8 @@ def train_full(args):
                     bss = bss.cuda()
                     bslen = bslen.cuda()
                 if args.labeled_format:
-                    rc_loss, ir1_loss, ir2_loss, sidx, eidx, context = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
+
+                    rc_loss, ir1_loss, ir2_loss, miss_rate, sidx, eidx = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
                                                 qlens, slens, avec1_len, p_words, a1, a2, bsi=bsi, bss=bss, bslen=bslen)
                 else:
                     rc_loss, ir1_loss, ir2_loss, sidx, eidx, context = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
@@ -291,12 +304,13 @@ def train_full(args):
                 total_rc_loss += float(rc_loss)
                 total_ir1_loss += float(ir1_loss)
                 total_ir2_loss += float(ir2_loss)
-                torch.nn.utils.clip_grad_norm_(model.rc_model.parameters(),1)
+                torch.nn.utils.clip_grad_norm_(model.rc_model.parameters(),5)
                 optimizer.step()
 
-                reset_embeddings(rc_model.word_embeddings, embeddings, trained_idx)  
+                reset_embeddings(model.rc_model.word_embeddings, embeddings, trained_idx)  
                 t.set_postfix(loss=train_loss/local_step, rc_loss=total_rc_loss/local_step, 
-                                ir1_loss=total_ir1_loss/local_step, ir2_loss=total_ir2_loss/local_step)          
+                                ir1_loss=total_ir1_loss/local_step, ir2_loss=total_ir2_loss/local_step,
+                                miss_rate=miss_rate)          
                 # break
                 #rc_model.word_embeddings[0].weight.data[trained_idx] = fixed_embeddings
                 # pr.disable()
@@ -330,17 +344,22 @@ def train_full(args):
                     qlens = qlens.cuda()
                     slens = slens.cuda()
 
+                if model.rc_pretrain:
+                    sidx, eidx, context = model.evaluate(q, q_chars, passage, passage_chars, qlens, slens, p_words,bsi=bsi, bss=bss,
+                                                                                bslen=bslen)
+                else:
+                    sidx, eidx, context = model.evaluate(q, q_chars, passage, passage_chars, qlens, slens, p_words,bsi=None, bss=None,
+                                                                                bslen=None)
+                if not model.ir_pretrain:                    
+                    # dev_loss += 0# batch_loss.cpu().item()
+                    # print(context)
 
-                sidx, eidx, context = model.evaluate(q, q_chars, passage, passage_chars, qlens, slens, p_words)
-                # dev_loss += 0# batch_loss.cpu().item()
-                # print(context)
-
-                batch_score = compute_scores(rouge, rrrouge, sidx, eidx, context, a1, a2)
-                # gen_rouge += generate_scores(rouge, generate_output.cpu().numpy(), id2words, a1, a2)
-                rouge_scores += batch_score[0]
-                bleu1_scores += batch_score[1]
-                bleu4_scores += batch_score[2]
-                another_rouge += batch_score[3]
+                    batch_score = compute_scores(rouge, rrrouge, sidx, eidx, context, a1, a2)
+                    # gen_rouge += generate_scores(rouge, generate_output.cpu().numpy(), id2words, a1, a2)
+                    rouge_scores += batch_score[0]
+                    bleu1_scores += batch_score[1]
+                    bleu4_scores += batch_score[2]
+                    another_rouge += batch_score[3]
             avg_rouge = rouge_scores / count
             avg_bleu1 = bleu1_scores / count
             avg_bleu4 = bleu4_scores / count

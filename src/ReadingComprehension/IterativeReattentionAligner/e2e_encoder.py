@@ -218,6 +218,7 @@ class MnemicReader(nn.Module):
             print('bad probs')
 
         context_len = s_prob.shape[1]
+
         max_idx = torch.argmax(probs, dim=1)
         s_index = max_idx // context_len
         e_index = max_idx % context_len
