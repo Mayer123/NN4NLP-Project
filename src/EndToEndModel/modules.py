@@ -10,7 +10,7 @@ from ReadingComprehension.IterativeReattentionAligner.CSMrouge import RRRouge
 class EndToEndModel(nn.Module):
     """docstring for End2EndModel"""
     def __init__(self, ir_model1, ir_model2, rc_model, ag_model, w2i, c2i, 
-                    n_ctx1_sents=6, n_ctx2_sents=5, span_size=15, use_ir2=False):
+                    n_ctx1_sents=10, n_ctx2_sents=5, span_size=15, use_ir2=False):
         super(EndToEndModel, self).__init__()
         self.ir_model1 = ir_model1
         self.ir_model2 = ir_model2
@@ -43,12 +43,13 @@ class EndToEndModel(nn.Module):
         if not torch.isfinite(c_scores).all():
             print('bad c_scores')
             print(c_scores)        
-        #c_scores = torch.log(F.gumbel_softmax(c_scores))
+        c_scores = torch.log(F.gumbel_softmax(c_scores))
 
         ir1_loss = 0
 
-        _, topk_idx_ir1 = torch.topk(c_scores, self.n_ctx1_sents, 
+        _, topk_idx_ir1 = torch.topk(c_scores, min(self.n_ctx1_sents, c_scores.shape[1]), 
                                         dim=1, sorted=False)
+
         if self.ir_model1.training:
             # max_scores, best_sent_idxs = torch.max(c_rouge, dim=1)
             # best_sent_idxs = best_sent_idxs.cuda()
@@ -65,6 +66,7 @@ class EndToEndModel(nn.Module):
 
                 for i in range(len(topk_idx_ir1)):
                     top_selected_idx = [k for k,j in enumerate(topk_rouge_idx[i]) if j in topk_idx_ir1[i]]
+                    print (len(top_selected_idx))
                     if top_selected_idx == []:
                         worst_idx = torch.argmin(bss[i], dim=0)
                         topk_idx_ir1[i][-1] = bsi[i, worst_idx, 0]
@@ -86,20 +88,20 @@ class EndToEndModel(nn.Module):
                 best_start_idx = torch.LongTensor(best_start_idx).to(q.device)
                 best_end_idx = torch.LongTensor(best_end_idx).to(q.device)                      
 
-            #rest_rouge_idx = [[j for j in range(c.shape[0]) if j not in topk_rouge_idx[i]] for i in range(q.shape[0])]            
-            #best_score = [c_scores[i, topk_rouge_idx[i]] for i in range(len(topk_rouge_idx))]
-            #rest_score = [c_scores[i, rest_rouge_idx[i]] for i in range(len(rest_rouge_idx))]
+            rest_rouge_idx = [[j for j in range(c.shape[0]) if j not in topk_rouge_idx[i]] for i in range(q.shape[0])]            
+            best_score = [c_scores[i, topk_rouge_idx[i]] for i in range(len(topk_rouge_idx))]
+            rest_score = [c_scores[i, rest_rouge_idx[i]] for i in range(len(rest_rouge_idx))]
 
-            # for i in range(len(topk_rouge_idx)):                   
-            #     _rest_score = rest_score[i].view(1,-1)
-            #     _best_score = best_score[i].view(-1,1).expand(-1, _rest_score.shape[1])
-            #     diff = F.relu(1 - (_best_score - _rest_score))
-            #     ir1_loss += torch.mean(diff)
-            # ir1_loss /= len(topk_rouge_idx)
-            ir_model_target = torch.zeros(c_scores.shape).to(c_scores.device)
-            for i in range(len(topk_rouge_idx)):
-                ir_model_target[i][topk_rouge_idx[i]] = 1
-            ir1_loss = self.ir_loss(c_scores, ir_model_target)
+            for i in range(len(topk_rouge_idx)):                   
+                _rest_score = rest_score[i].view(1,-1)
+                _best_score = best_score[i].view(-1,1).expand(-1, _rest_score.shape[1])
+                diff = F.relu(1 - (_best_score - _rest_score))
+                ir1_loss += torch.mean(diff)
+            ir1_loss /= len(topk_rouge_idx)
+            # ir_model_target = torch.zeros(c_scores.shape).to(c_scores.device)
+            # for i in range(len(topk_rouge_idx)):
+            #     ir_model_target[i][topk_rouge_idx[i]] = 1
+            # ir1_loss = self.ir_loss(c_scores, ir_model_target)
         
         ctx1 = [c[topk_idx_ir1[i]] for i in range(len(c_scores))]
         ctx1 = torch.stack(ctx1, dim=0)        
@@ -231,7 +233,7 @@ class EndToEndModel(nn.Module):
                                                 best_end_idx)
 
         # print (loss1)
-        return loss1, ir1_loss, ir2_loss, sidx, eidx
+        return loss1, ir1_loss, ir2_loss, sidx, eidx, string_sents
         
         # print (sidx, eidx)
         # raw_span = []

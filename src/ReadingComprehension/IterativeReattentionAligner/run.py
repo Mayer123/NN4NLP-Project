@@ -51,14 +51,14 @@ def add_arguments(parser):
     parser.add_argument('--load_model', type=str, default="", help='whether to load pre-trained model')
     parser.add_argument('--model_name', type=str, default="rmr.pt", help='the name for the saved model')
     parser.add_argument('--save_results', action='store_true', help='whether to store the results')
-    parser.add_argument('--RL_loss_after', type=int, default=5, help='activate RL loss after how many epochs')
+    parser.add_argument('--RL_loss_after', type=int, default=3, help='activate RL loss after how many epochs')
     parser.add_argument('--mode', type=str, default='summary', help='mode of training') 
     parser.add_argument('--min_occur', type=int, default=100, help='minimum occurance of a word to be counted in common vocab')  
     parser.add_argument('--load_ir_model', type=str, default='', help='mode of training') 
     parser.add_argument('--eval_only', action='store_true', help='whether to store the results')
     parser.add_argument('--use_ir2', action='store_true', help='whether to store the results')
     parser.add_argument('--alt_ir_training', action='store_true', help='whether to store the results')
-    parser.add_argument('--n_chunks', type=int, default=3, help='number of chunks to select with the first IR model')  
+    parser.add_argument('--n_chunks', type=int, default=5, help='number of chunks to select with the first IR model')  
     parser.add_argument('--n_spans', type=int, default=5, help='number of spans to select using the second IR model')  
     parser.add_argument('--chunk_len', type=int, default=100, help='number of spans to select using the second IR model')  
     parser.add_argument('--span_len', type=int, default=15, help='number of spans to select using the second IR model')
@@ -91,7 +91,10 @@ def compute_scores(rouge, rrrouge, start, end, context, a1, a2, show=False):
         #return score
         #print ("Sample output " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
         # print('pred_span:', predicted_span, start[i], end[i], context[i])
-        rouge_score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
+        try:
+            rouge_score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
+        except:
+            print ('what the fuck is this ', predicted_span)
         bleu1 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(1, 0, 0, 0))
         bleu4 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(0.25, 0.25, 0.25, 0.25))
         another_rouge += rrrouge.calc_score([predicted_span], [a1[i], a2[i]])
@@ -183,8 +186,8 @@ def train_full(args):
     #                         args.emb_dropout, args.rnn_dropout)
     # ir_model = AttentionRM(rc_model.word_embeddings, rc_model.pos_emb, pos_vocab_size=len(tag2i))
     if args.load_ir_model == '':
-        #ir_model = KNRM(init_emb=embeddings)
-        ir_model = BOWRM(init_emb=embeddings)
+        ir_model = KNRM(init_emb=embeddings)
+        #ir_model = BOWRM(init_emb=embeddings)
     else:
         ir_model = torch.load(args.load_ir_model)
 
@@ -210,7 +213,7 @@ def train_full(args):
         model = model.cuda()
         fixed_embeddings = fixed_embeddings.cuda()
 
-
+    #print (model.use_RLLoss)
     logger.info('Start training')
     logger.info('-' * 100)
     global_step = 0
@@ -222,11 +225,14 @@ def train_full(args):
         total_ir1_loss = 0.0
         total_ir2_loss = 0.0
         start_time = time.time()
-
+        train_rouge1 = 0.0
+        train_rouge2 = 0.0
+        num_sample = 0
+        print (ITER,args.RL_loss_after)
         if not args.eval_only:            
             if ITER >= args.RL_loss_after:
                 model.use_RLLoss = True
-
+                model.rc_model.use_RLLoss = True
             model.train()
             if args.use_ir2 and args.alt_ir_training:
                 if ITER % 10 < 5:
@@ -269,15 +275,18 @@ def train_full(args):
                     bss = bss.cuda()
                     bslen = bslen.cuda()
                 if args.labeled_format:
-                    rc_loss, ir1_loss, ir2_loss, sidx, eidx = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
+                    rc_loss, ir1_loss, ir2_loss, sidx, eidx, context = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
                                                 qlens, slens, avec1_len, p_words, a1, a2, bsi=bsi, bss=bss, bslen=bslen)
                 else:
-                    rc_loss, ir1_loss, ir2_loss, sidx, eidx = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
+                    rc_loss, ir1_loss, ir2_loss, sidx, eidx, context = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
                                                 qlens, slens, avec1_len, p_words, a1, a2)
                 batch_loss = rc_loss+ir1_loss+ir2_loss                
                 optimizer.zero_grad()
                 batch_loss.backward()
-
+                batch_score = compute_scores(rouge, rrrouge, sidx, eidx, context, a1, a2)
+                train_rouge1 += batch_score[0]
+                train_rouge2 += batch_score[3]
+                num_sample += q.shape[0]
                 train_loss += float(batch_loss)
                 total_rc_loss += float(rc_loss)
                 total_ir1_loss += float(ir1_loss)
@@ -298,7 +307,7 @@ def train_full(args):
                 # return
                 # if global_step % 100 == 0:
                 #     logger.info("iter %r global_step %s : batch loss=%.4f, time=%.2fs" % (ITER, global_step, batch_loss.cpu().item(), time.time() - start_time))
-            logger.info("iter %r global_step %s : train loss/batch=%.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), time.time() - start_time))
+            logger.info("iter %r global_step %s : train loss/batch=%.4f, rouge=%.4f, another rouge=%.4f, time=%.2fs" % (ITER, global_step, train_loss/len(train_loader), train_rouge1/num_sample, train_rouge2/num_sample, time.time() - start_time))
         
         model.eval()
         with torch.no_grad():

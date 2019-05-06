@@ -206,21 +206,21 @@ class MnemicReader(nn.Module):
         #print (start)
         #print (torch.gather(e_prob.squeeze(), 1, end.unsqueeze(1)))
         #print (end)
-        s_prob = torch.log(s_prob)
-        e_prob = torch.log(e_prob)
+        #s_prob = torch.log(s_prob)
+        #e_prob = torch.log(e_prob)
         s_prob = s_prob.reshape(s_prob.size()[0], s_prob.size()[1])
         e_prob = e_prob.reshape(s_prob.size()[0], s_prob.size()[1])
-        loss1 = self.loss(s_prob, start)
-        loss2 = self.loss(e_prob, end)
+        loss1 = self.loss(torch.log(s_prob), start)
+        loss2 = self.loss(torch.log(e_prob), end)
         loss = loss1 + loss2
 
         if not torch.isfinite(probs).all():
             print('bad probs')
 
-        # context_len = s_prob.shape[1]
-        # max_idx = torch.argmax(probs, dim=1)
-        # start = max_idx // context_len
-        # end = max_idx % context_len
+        context_len = s_prob.shape[1]
+        max_idx = torch.argmax(probs, dim=1)
+        s_index = max_idx // context_len
+        e_index = max_idx % context_len
         
         # pred_a = [c_vec[i, start[i]:end[i]] for i in range(len(start))]        
         # padded_pred_a = nn.utils.rnn.pad_sequence(pred_a, batch_first=True)            
@@ -239,8 +239,8 @@ class MnemicReader(nn.Module):
         #e_prob = e_prob * c_mask.float()
 
         probs = torch.exp(probs)
-        _, s_index = torch.max(s_prob, dim=1)
-        _, e_index = torch.max(e_prob, dim=1)
+        #_, s_index = torch.max(s_prob, dim=1)
+        #_, e_index = torch.max(e_prob, dim=1)
 
         if not self.use_RLLoss:
             return loss, s_index, e_index
@@ -255,7 +255,7 @@ class MnemicReader(nn.Module):
         b1 = torch.log(torch.pow(self.weight_a, 2))
         b2 = torch.log(torch.pow(self.weight_b, 2))
         #total_loss = (loss1+loss2)*self.weight_a+rl_loss*self.weight_b
-        return loss * a1 + rl_loss * a2 + b1 + b2, loss, s_index, e_index
+        return loss * a1 + rl_loss * a2 + b1 + b2, s_index, e_index
         #print (loss1, loss2)
         # loss = (start - s_index)**2 + (end - e_index)**2
         # loss = (loss1+loss2)*self.weight_a.pow(-1)*self.half+rl_loss*self.weight_b.pow(-1)*self.half+torch.log(self.weight_a)+torch.log(self.weight_b)
