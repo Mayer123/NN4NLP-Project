@@ -217,7 +217,7 @@ class MnemicReader(nn.Module):
         if not torch.isfinite(probs).all():
             print('bad probs')
 
-        # context_len = s_prob.shape[1]
+        context_len = s_prob.shape[1]
         # max_idx = torch.argmax(probs, dim=1)
         # start = max_idx // context_len
         # end = max_idx % context_len
@@ -255,7 +255,7 @@ class MnemicReader(nn.Module):
         b1 = torch.log(torch.pow(self.weight_a, 2))
         b2 = torch.log(torch.pow(self.weight_b, 2))
         #total_loss = (loss1+loss2)*self.weight_a+rl_loss*self.weight_b
-        return loss * a1 + rl_loss * a2 + b1 + b2, loss, s_index, e_index
+        return loss * a1 + rl_loss * a2 + b1 + b2, s_index, e_index
         #print (loss1, loss2)
         # loss = (start - s_index)**2 + (end - e_index)**2
         # loss = (loss1+loss2)*self.weight_a.pow(-1)*self.half+rl_loss*self.weight_b.pow(-1)*self.half+torch.log(self.weight_a)+torch.log(self.weight_b)
