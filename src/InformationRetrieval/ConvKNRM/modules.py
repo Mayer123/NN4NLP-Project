@@ -59,7 +59,7 @@ class ConvKNRM(nn.Module):
 		
 	def embed(self, x):
 		x_emb = self.dropout(self.emb(x[:,:,0]))
-		x_emb = x_emb / torch.norm(x_emb, dim=2, keepdim=True)
+		x_emb = x_emb / (torch.norm(x_emb, dim=2, keepdim=True)+1e-10)
 		return x_emb
 
 	def score(self, q_emb, d_emb, qlen, dlen):
@@ -116,7 +116,7 @@ class ConvKNRM(nn.Module):
 															qlen_batch, clen_batch)
 		return scores
 
-	def forward_singleContext(self, q, d, qlen, dlen, batch_size=1024):
+	def forward_singleContext(self, q, d, qlen, dlen, batch_size=256):
 		q = self.embed(q)
 		d = self.embed(d)
 

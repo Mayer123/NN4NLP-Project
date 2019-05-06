@@ -3,10 +3,43 @@ import numpy as np
 import tqdm
 import random
 import torch
-import torch.nn as nn
 import re
 import json
 from ReadingComprehension.IterativeReattentionAligner.CSMrouge import RRRouge
+
+def compute_scores(rouge, rrrouge, start, end, context, a1, a2, show=False):
+    rouge_score = 0.0
+    bleu1 = 0.0
+    bleu4 = 0.0
+    another_rouge = 0.0
+    preds = []
+    sample_scores = []
+    for i in range(0, len(start)):
+        #print (context[i])
+        #print (start[i], end[i])
+        #print (len(context[i]), context[i][start[i]:end[i]+1])
+        if start[i] > end[i]:
+            predicted_span = 'NO-ANSWER-FOUND'
+        else:
+            predicted_span = ' '.join(context[i][start[i]:end[i]+1])
+        if predicted_span in stoplist:
+            predicted_span = 'NO-ANSWER-FOUND'
+        if show:
+            print ('Extracted Span %s' % predicted_span)
+        #print ("Sample output " + str(start[i]) +" " + str(end[i]) + " " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
+        #score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
+        #return score
+        #print ("Sample output " + predicted_span + " A1 " + a1[i] + " A2 " + a2[i])
+        # print('pred_span:', predicted_span, start[i], end[i], context[i])
+        rouge_score += max(rouge.get_scores(predicted_span, a1[i])[0]['rouge-l']['f'], rouge.get_scores(predicted_span, a2[i])[0]['rouge-l']['f'])
+        bleu1 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(1, 0, 0, 0))
+        bleu4 += sentence_bleu([a1[i].split(),a2[i].split()], predicted_span.split(), weights=(0.25, 0.25, 0.25, 0.25))
+        another_rouge += rrrouge.calc_score([predicted_span], [a1[i], a2[i]])
+        #bleu1 += compute_bleu([[a1[i],a2[i]]], [predicted_span], max_order=1)[0]
+        #bleu4 += compute_bleu([[a1[i],a2[i]]], [predicted_span])[0]
+        preds.append(predicted_span)
+        sample_scores.append(another_rouge)
+    return (rouge_score, bleu1, bleu4, another_rouge, preds, sample_scores)
 
 def word_tokenize(text):
   """Split on whitespace and punctuation."""
@@ -33,7 +66,7 @@ class FulltextDataset(torch.utils.data.Dataset):
         batch = []
         count = 0
         for sample in data:  
-            if len(self.data) == 2:
+            if len(self.data) == 3:
                 break
             if len(batch) == 0:
                 batch.append(sample)
@@ -169,81 +202,6 @@ def mCollateFn(batch):
             tAtensor, None, qlens, slens, talens, alens, A1, A2, Passageswords,
             Pbsitensor, Pbsstensor, bsilen)
 
-def mCollateFn2(batch):
-    Qwords = []
-    Qtags = []
-    Qners = []
-    Qchars = []
-    tA = []
-    A1 = []
-    A2 = []
-    Passages = []
-    Passagestags = []
-    Passageswords = []
-    Passagesrouge = []
-    PassageBSI = []
-    PassageBSS = []
-    assert len(batch) == 1
-    batch = batch[0]
-    idset = []
-    for i, (cid,qw,qt,qn,qc,ta,a1,a2,p, bsi, bss) in enumerate(batch):        
-        #for i, (cid,qw,qt,qn,qc,a1,a2,p) in enumerate(sample):
-        idset.append(cid)
-        Qwords.append(torch.LongTensor(qw))
-        Qtags.append(torch.LongTensor(qt))
-        Qners.append(torch.LongTensor(qn))
-        Qchars.append(torch.LongTensor(qc))
-        tA.append(torch.LongTensor(ta))
-        A1.append(a1)
-        A2.append(a2)
-        PassageBSI.append(torch.LongTensor(bsi))
-        PassageBSS.append(torch.LongTensor(bss))
-        if i == 0:
-            Passages = [torch.LongTensor(sent[0]) for sent in p]
-            Passagestags = [torch.LongTensor(sent[1]) for sent in p]
-            Passagesners = [torch.LongTensor(sent[2]) for sent in p]
-            Passageschars = [torch.LongTensor(sent[3]) for sent in p]
-            Passageswords = [sent[4] for sent in p]
-        Passagesrouge.append([sent[5] for sent in p])
-    # print(cid, a1, a2, list(zip(bsi, bss)))
-    assert len(set(idset)) == 1
-
-    qlens = torch.tensor([len(q) for q in Qwords]).long()
-    qclens = torch.tensor([len(qc) for qc in Qchars]).long()
-    #plens = torch.tensor([len(p) for p in Passages]).long()
-    slens = torch.tensor([len(s) for s in Passages]).long()   # The assumption is that passages in one batch are all the same
-    sclens = torch.tensor([len(pc) for pc in Passageschars]).long()
-    talens = torch.tensor([len(a) for a in tA]).long()
-    alens = torch.tensor([len(a) for a in A1]).long()
-    rlens = torch.tensor([len(pr) for pr in Passagesrouge])
-    bsilen = torch.tensor([len(si) for si in PassageBSI])
-    bsslen = torch.tensor([len(ss) for ss in PassageBSS])  
-
-    Qtensor = nn.utils.rnn.pad_sequence(Qwords, batch_first=True)
-    Qtagtensor = nn.utils.rnn.pad_sequence(Qtags, batch_first=True)
-    Qnertensor = nn.utils.rnn.pad_sequence(Qners, batch_first=True)
-    Qchartensor = nn.utils.rnn.pad_sequence(Qchars, batch_first=True)
-    # Prougetensor = nn.utils.rnn.pad_sequence(Passagesrouge, batch_first=True)
-    tAtensor = nn.utils.rnn.pad_sequence(tA, batch_first=True)
-    Pbsitensor = nn.utils.rnn.pad_sequence(PassageBSI, batch_first=True)
-    Pbsstensor = nn.utils.rnn.pad_sequence(PassageBSS, batch_first=True)
-    Ptensor = nn.utils.rnn.pad_sequence(Passages, batch_first=True)
-    Ptagtensor = nn.utils.rnn.pad_sequence(Passagestags, batch_first=True)
-    Pnertensor = nn.utils.rnn.pad_sequence(Passagesners, batch_first=True)
-    Pchartensor = nn.utils.rnn.pad_sequence(Passageschars, batch_first=True)
-
-    rlens = torch.tensor([len(pr) for pr in Passagesrouge])
-    max_r_len = torch.max(rlens)
-    Prougetensor = torch.zeros(len(batch), max_r_len).float()
-
-    Ptensor = torch.cat([Ptensor.unsqueeze(2), Ptagtensor.unsqueeze(2), 
-                            Pnertensor.unsqueeze(2)], dim=2)
-    Qtensor = torch.cat([Qtensor.unsqueeze(2), Qtagtensor.unsqueeze(2), 
-                            Qnertensor.unsqueeze(2)], dim=2)
-    return (Qtensor, Qchartensor, Ptensor, Pchartensor, Prougetensor, 
-            tAtensor, None, qlens, slens, talens, alens, A1, A2, Passageswords,
-            Pbsitensor, Pbsstensor, bsilen)
-
 def build_fulltext_dicts(data, min_occur=100, labeled_format=True):
     w2i = Counter()
     tag2i = Counter()
@@ -314,9 +272,8 @@ def spansToRouge(passage_idxs, rouge_scores):
     return new_passage_idxs
 
 def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, 
-                        build_chunks=False, labeled_format=False, is_train=False):
+                        build_chunks=False, labeled_format=False):
     max_word_len = 16
-    num_skipped = 0
     context_cache = {}
     words2charIds = lambda W: [[c2i.get(w[i], c2i['<unk>']) if i < len(w) else c2i['<pad>'] for i in range(max_word_len)] for w in W]
     r = RRRouge()
@@ -340,8 +297,6 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None,
             
             if labeled_format:
                 best_spans = q['passage_labels']
-                if best_spans[0][5] == 0:
-                    continue
                 best_spans = sorted(best_spans, key=lambda x: x[4], reverse=True)
                 best_span_idxs = [[x[0], x[2], x[3]] for x in best_spans]
                 best_span_scores = [x[4] for x in best_spans]
@@ -534,8 +489,7 @@ def convert_data(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=-1):
                 new_start = len(context_vector) - max_len
                 if new_start > sample['start_index']:
                     print('This context is too long')
-                    continue
-                    #print (current_len)
+                    print (current_len)
                 context_vector = context_vector[new_start:new_start+max_len]
                 context_pos_vec = context_pos_vec[new_start:new_start+max_len]
                 context_ner_vec = context_ner_vec[new_start:new_start+max_len]

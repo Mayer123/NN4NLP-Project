@@ -73,7 +73,6 @@ class EndToEndModel(nn.Module):
 
                 for i in range(len(topk_idx_ir1)):
                     top_selected_idx = [k for k,j in enumerate(topk_rouge_idx[i]) if j in topk_idx_ir1[i]]
-                    #print (len(top_selected_idx))
                     if top_selected_idx == []:
                         worst_idx = torch.argmax(bss[i], dim=0)
                         topk_idx_ir1[i][-1] = bsi[i, worst_idx, 0]
@@ -126,6 +125,7 @@ class EndToEndModel(nn.Module):
         ctx_len1 = [clen[topk_idx_ir1[i]] for i in range(len(topk_idx_ir1))]        
         ctx_len1 = torch.stack(ctx_len1, dim=0)        
         
+        chunk_scores = c_scores
         ir2_loss = 0
         for i in range(len(ctx1)):
             new_ctx = ctx1[i]
@@ -227,11 +227,30 @@ class EndToEndModel(nn.Module):
                 # print(best_start_idx[i], best_end_idx[i])
                 # print(string_sents[i][best_start_idx[i]:best_end_idx[i]+1])
                 # print([self.i2w[int(j)] for j in ctx[i, best_start_idx[i]:best_end_idx[i]+1,0]])
-            return ctx, ctx_chars, ctx_len, string_sents, ir1_loss, ir2_loss, best_start_idx, best_end_idx, misses/q.shape[0]
+            return ctx, ctx_chars, ctx_len, string_sents, ir1_loss, ir2_loss, best_start_idx, best_end_idx, misses/q.shape[0], chunk_scores
         return ctx, ctx_chars, ctx_len, string_sents
 
+    def computeRLLoss(self, q, q_chars, c, c_chars, chunk_scores, avec1, qlen, clen, alen, string_sents, a1, a2, bsi=None, bss=None, bslen=None):
+        chunk_scores = torch.exp(chunk_scores)
+        
+        _, sampled_chunk_idx = torch.topk(chunk_scores, 1, dim=1)
+        rewards = []
+
+        for i in range(sampled_chunk_idx.shape[0]):   
+            top_span_list = bsi[i, :, 0].tolist()         
+            if int(sampled_chunk_idx[i]) in top_span_list:
+                best_span_idx = top_span_list.index(int(sampled_chunk_idx[i]))
+                best_start_idx = bsi[[i], best_span_idx, 1]
+                best_end_idx = bsi[[i], best_span_idx, 2]
+                _, sidx, eidx = self.rc_model(c[:,:,0], c[:,:,1], c[:,:,2], c_chars, c_len, 
+                                                q[:,:,0], q[:,:,1], q[:,:,2], q_chars, qlen, 
+                                                string_sents, avec1, alen, a1, a2, best_start_idx, 
+                                                best_end_idx)
+            else:
+                rewards.append(0.0)
+
     def forward(self, q, q_chars, c, c_chars, c_rouge, avec1, avec2, qlen, clen, alen, p_words, a1, a2, bsi=None, bss=None, bslen=None, c_batch_size=512):        
-        ctx, c_chars, ctx_len, string_sents, ir1_loss, ir2_loss, best_start_idx, best_end_idx, miss_rate = self.getSpans(q, c, c_chars, qlen, clen, p_words, 
+        ctx, c_chars, ctx_len, string_sents, ir1_loss, ir2_loss, best_start_idx, best_end_idx, miss_rate, chunk_scores = self.getSpans(q, c, c_chars, qlen, clen, p_words, 
                                                                                 c_rouge=c_rouge, a1=a1, a2=a2, bsi=bsi, bss=bss,
                                                                                 bslen=bslen, c_batch_size=c_batch_size)
 

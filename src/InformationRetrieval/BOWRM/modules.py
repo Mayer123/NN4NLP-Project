@@ -30,7 +30,7 @@ class BOWRM(nn.Module):
 		x_emb = self.emb(x[:,:,0])
 		return x_emb
 
-	def score(self, q_emb, d_emb, qlen, dlen):		
+	def score_(self, q_emb, d_emb):		
 		q_sum = torch.mean(q_emb, dim=1)
 		d_sum = torch.mean(d_emb, dim=1)		
 		bow = torch.cat((q_sum, d_sum), dim=1)
@@ -38,28 +38,30 @@ class BOWRM(nn.Module):
 		scores = self.linear(proj).squeeze(1)
 		return scores
 
-	def forward(self, q, d, qlen, dlen):
-		q_emb = self.embed(q)
-		d_emb = self.embed(d)
-
+	def score(self, q_emb, d_emb, qlen, dlen):
 		if self.chunk_size > 0:
 			batch_size = q_emb.shape[0]
-
-			clip_idx = q_emb.shape[1] % self.chunk_size
-			if clip_idx > 0:
-				q_emb = q_emb[:, :-clip_idx]
-			q_emb = q_emb.view(-1, self.chunk_size, q_emb.shape[2])
-
 			clip_idx = d_emb.shape[1] % self.chunk_size
 			if clip_idx > 0:
 				d_emb = d_emb[:, :-clip_idx]
-			d_emb = d_emb.view(-1, self.chunk_size, d_emb.shape[2])
+			d_emb = d_emb.view(batch_size, -1, self.chunk_size, d_emb.shape[2])
+			d_emb = d_emb.transpose(0,1)			
 
-			score = self.score(q_emb, d_emb, None, None)
-			score = score.view(batch_size,-1)
-			score = torch.max(score, dim=1)
+			scores = [self.score_(q_emb, d_emb[i]) for i in range(d_emb.shape[0])]
+			scores = torch.stack(scores, dim=1)			
+
+			# score = self.score(q_emb, d_emb, None, None)
+			# score = score.view(batch_size,-1)
+
+			score = torch.max(scores, dim=1)[0]
 		else:
-			score = self.score(q_emb, d_emb, qlen, dlen)
+			score = self.score_(q_emb, d_emb)
+		return score	
+	def forward(self, q, d, qlen, dlen):
+		q_emb = self.embed(q)
+		d_emb = self.embed(d)		
+		
+		score = self.score(q_emb, d_emb, qlen, dlen)
 		return score
 
 	def getSentScores(self, q, c, qlen, clen, batch_size):		
