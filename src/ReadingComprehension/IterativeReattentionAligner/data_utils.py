@@ -238,8 +238,9 @@ def spansToRouge(passage_idxs, rouge_scores):
     return new_passage_idxs
 
 def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None, 
-                        build_chunks=False, labeled_format=False):
+                        build_chunks=False, labeled_format=False, is_train=False):
     max_word_len = 16
+    num_skipped = 0
     context_cache = {}
     words2charIds = lambda W: [[c2i.get(w[i], c2i['<unk>']) if i < len(w) else c2i['<pad>'] for i in range(max_word_len)] for w in W]
     r = RRRouge()
@@ -263,6 +264,10 @@ def convert_fulltext(data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=None,
             
             if labeled_format:
                 best_spans = q['passage_labels']
+                if is_train and best_spans[0][5] == 0:
+                    num_skipped += 1
+                    print ('skipping this sample')
+                    continue
                 best_spans = sorted(best_spans, key=lambda x: x[4], reverse=True)
                 best_span_idxs = [[x[0], x[2], x[3]] for x in best_spans]
                 best_span_scores = [x[4] for x in best_spans]

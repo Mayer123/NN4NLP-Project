@@ -165,7 +165,7 @@ def train_full(args):
     c2i['<unk>'] = 1
 
     logger.info('Converting to index')
-    train = convert_fulltext(training_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=args.chunk_len, build_chunks= not args.labeled_format, labeled_format=args.labeled_format)
+    train = convert_fulltext(training_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=args.chunk_len, build_chunks= not args.labeled_format, labeled_format=args.labeled_format, is_train=True)
     dev = convert_fulltext(dev_data, w2i, tag2i, ner2i, c2i, common_vocab, max_len=args.chunk_len, build_chunks= not args.labeled_format, labeled_format=args.labeled_format)
     train = FulltextDataset(train, args.train_batch_size)
     dev = FulltextDataset(dev, args.dev_batch_size)
@@ -191,8 +191,9 @@ def train_full(args):
         model = torch.load(args.load_model)
     else:
         if args.load_ir_model == '':
-            # ir_model = KNRM(init_emb=embeddings)
-            ir_model = BOWRM(init_emb=embeddings, chunk_size=5)
+            #ir_model = ConvKNRM(init_emb=embeddings)
+            ir_model = BOWRM(init_emb=embeddings, chunk_size=-1)
+            #ir_model = AttentionRM(init_emb=embeddings, pos_vocab_size=len(tag2i))
         else:
             ir_model = torch.load(args.load_ir_model)
 
@@ -230,6 +231,9 @@ def train_full(args):
         total_ir1_loss = 0.0
         total_ir2_loss = 0.0
         start_time = time.time()
+        train_rouge1 = 0.0
+        train_rouge2 = 0.0
+        num_sample = 0.0
 
         if not args.eval_only:
             if ITER >= args.RL_loss_after:
@@ -288,7 +292,7 @@ def train_full(args):
                     bslen = bslen.cuda()
                 if args.labeled_format:
 
-                    rc_loss, ir1_loss, ir2_loss, miss_rate, sidx, eidx = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
+                    rc_loss, ir1_loss, ir2_loss, miss_rate, sidx, eidx, context = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
                                                 qlens, slens, avec1_len, p_words, a1, a2, bsi=bsi, bss=bss, bslen=bslen)
                 else:
                     rc_loss, ir1_loss, ir2_loss, sidx, eidx, context = model(q, q_chars, passage, passage_chars, passage_rouge, avec1, avec2, 
@@ -296,9 +300,10 @@ def train_full(args):
                 batch_loss = rc_loss+ir1_loss+ir2_loss                
                 optimizer.zero_grad()
                 batch_loss.backward()
-                batch_score = compute_scores(rouge, rrrouge, sidx, eidx, context, a1, a2)
-                train_rouge1 += batch_score[0]
-                train_rouge2 += batch_score[3]
+                if not model.ir_pretrain:
+                    batch_score = compute_scores(rouge, rrrouge, sidx, eidx, context, a1, a2)
+                    train_rouge1 += batch_score[0]
+                    train_rouge2 += batch_score[3]
                 num_sample += q.shape[0]
                 train_loss += float(batch_loss)
                 total_rc_loss += float(rc_loss)

@@ -51,7 +51,7 @@ class EndToEndModel(nn.Module):
             if not torch.isfinite(c_scores).all():
                 print('bad c_scores')
                 print(c_scores)        
-            c_scores = torch.log(F.gumbel_softmax(c_scores))
+            #c_scores = torch.log(F.gumbel_softmax(c_scores))
             _, topk_idx_ir1 = torch.topk(c_scores, self.n_ctx1_sents, 
                                         dim=1, sorted=False)
 
@@ -73,9 +73,9 @@ class EndToEndModel(nn.Module):
 
                 for i in range(len(topk_idx_ir1)):
                     top_selected_idx = [k for k,j in enumerate(topk_rouge_idx[i]) if j in topk_idx_ir1[i]]
-                    print (len(top_selected_idx))
+                    #print (len(top_selected_idx))
                     if top_selected_idx == []:
-                        worst_idx = torch.argmin(bss[i], dim=0)
+                        worst_idx = torch.argmax(bss[i], dim=0)
                         topk_idx_ir1[i][-1] = bsi[i, worst_idx, 0]
                         top_selected_idx.append(worst_idx)
                         misses += 1
@@ -98,12 +98,14 @@ class EndToEndModel(nn.Module):
 
             rest_rouge_idx = [[j for j in range(c.shape[0]) if j not in topk_rouge_idx[i]] for i in range(q.shape[0])]  
 
-
-            # ir_model_target = torch.zeros(c_scores.shape).to(c_scores.device)
-            # for i in range(len(topk_rouge_idx)):
-            #     ir_model_target[i][topk_rouge_idx[i]] = 1
-            # ir1_loss = self.ir_loss(c_scores, ir_model_target)
-            if not self.rc_pretrain:          
+            if not self.rc_pretrain: 
+                ir_model_target = torch.zeros(c_scores.shape).to(c_scores.device)
+                #ir_model_target = ir_model_target - 1
+                for i in range(len(topk_rouge_idx)):
+                    #ir_model_target[i, :topk_rouge_idx[i].shape[0]] = topk_rouge_idx[i]
+                    ir_model_target[i][topk_rouge_idx[i]] = 1
+                ir1_loss_bce = self.ir_loss(c_scores, ir_model_target)
+                c_scores = torch.log(F.gumbel_softmax(c_scores))         
                 best_score = [c_scores[i, topk_rouge_idx[i]] for i in range(len(topk_rouge_idx))]
                 rest_score = [c_scores[i, rest_rouge_idx[i]] for i in range(len(rest_rouge_idx))]
 
@@ -112,7 +114,8 @@ class EndToEndModel(nn.Module):
                     _best_score = best_score[i].view(-1,1).expand(-1, _rest_score.shape[1])
                     diff = F.relu(1 - (_best_score - _rest_score))
                     ir1_loss += torch.mean(diff)
-                ir1_loss /= len(topk_rouge_idx)
+                ir1_loss /= len(topk_rouge_idx) 
+                ir1_loss += ir1_loss_bce              
         
         ctx1 = [c[topk_idx_ir1[i]] for i in range(len(topk_idx_ir1))]
         ctx1 = torch.stack(ctx1, dim=0)        
@@ -239,7 +242,7 @@ class EndToEndModel(nn.Module):
         # print(c_chars.shape)
 
         if self.ir_pretrain:
-            return ir1_loss, ir1_loss, ir2_loss, miss_rate, None, None
+            return ir1_loss, ir1_loss, ir2_loss, miss_rate, None, None, None
         
         loss1, sidx, eidx = self.rc_model(ctx[:,:,0], ctx[:,:,1], ctx[:,:,2], c_chars, ctx_len, 
                                                 q[:,:,0], q[:,:,1], q[:,:,2], q_chars, qlen, 
